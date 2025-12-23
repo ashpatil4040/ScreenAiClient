@@ -427,7 +427,7 @@ MIT License - See LICENSE file for details.
 
 ## Related Projects
 
-- **[ScreenAI-Server](https://github.com/rkumar1001/ScreenAI-Server)** - Reactive WebSocket relay server (Spring WebFlux + Netty)
+- **[ScreenAI-Server](https://github.com/vijayvir/ScreenAi)** - Reactive WebSocket relay server (Spring WebFlux + Netty)
 
 ---
 
