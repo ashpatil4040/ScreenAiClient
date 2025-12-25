@@ -419,12 +419,6 @@ Key dependencies from `pom.xml`:
 
 ---
 
-## License
-
-MIT License - See LICENSE file for details.
-
----
-
 ## Related Projects
 
 - **[ScreenAI-Server](https://github.com/vijayvir/ScreenAi)** - Reactive WebSocket relay server (Spring WebFlux + Netty)
