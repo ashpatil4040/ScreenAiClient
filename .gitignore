@@ -35,9 +35,18 @@ build/
 ### VS Code ###
 .vscode/
 
-### Mac OS ###
+### Mac OS / Windows / Linux ###
 .DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
 .mvn/apache-maven-3.9.6/
+
+### Log files ###
+*.log
+logs/
 
 ### Environment Variables (NEVER COMMIT!) ###
 .env
@@ -48,3 +57,16 @@ build/
 
 ### Credentials Storage ###
 .screenai/
+credentials.enc
+
+### Temporary files ###
+*.tmp
+*.temp
+*.bak
+*.pid
+
+### Video temp files ###
+*.ts
+*.mp4
+*.avi
+*.h264

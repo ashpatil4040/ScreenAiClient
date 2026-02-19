@@ -1,6 +1,8 @@
 package service;
 
+import config.EnvConfig;
 import org.springframework.web.socket.*;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 
 import jakarta.websocket.ContainerProvider;
@@ -27,6 +29,7 @@ public class ServerConnectionService {
     private static final Logger logger = LoggerFactory.getLogger(ServerConnectionService.class);
     
     private final String baseServerUrl;
+    private final EnvConfig envConfig;
     private volatile Consumer<String> onTextMessage;
     private volatile Consumer<byte[]> onBinaryMessage;
     private volatile Runnable onConnectionOpen;
@@ -54,6 +57,7 @@ public class ServerConnectionService {
      */
     public ServerConnectionService(String serverUrl) {
         this.baseServerUrl = serverUrl;
+        this.envConfig = EnvConfig.getInstance();
         
         // Configure WebSocket container with larger buffer sizes
         try {
@@ -107,16 +111,39 @@ public class ServerConnectionService {
         this.onError = handler;
     }
 
-    /**
-     * Get the WebSocket URL with optional token authentication.
-     */
-    private String getAuthenticatedUrl() {
-        if (authToken != null && !authToken.isEmpty()) {
-            // Append token as query parameter for WebSocket authentication
-            String separator = baseServerUrl.contains("?") ? "&" : "?";
-            return baseServerUrl + separator + "token=" + authToken;
+    private WebSocketHttpHeaders buildHandshakeHeaders() {
+        WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+        if (authToken != null && !authToken.isBlank()) {
+            headers.add("Authorization", "Bearer " + authToken);
         }
-        return baseServerUrl;
+        return headers;
+    }
+
+    private boolean isLoopbackHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String normalized = host.trim().toLowerCase();
+        return "localhost".equals(normalized) ||
+                "127.0.0.1".equals(normalized) ||
+                "::1".equals(normalized) ||
+                "[::1]".equals(normalized) ||
+                "0:0:0:0:0:0:0:1".equals(normalized);
+    }
+
+    private void validateTransportPolicy(URI uri) {
+        String scheme = uri.getScheme();
+        if (!"ws".equalsIgnoreCase(scheme) && !"wss".equalsIgnoreCase(scheme)) {
+            throw new IllegalArgumentException("Invalid WebSocket URL scheme. Use ws:// or wss://");
+        }
+
+        if ("ws".equalsIgnoreCase(scheme) &&
+                !envConfig.isAllowInsecureTransport() &&
+                !isLoopbackHost(uri.getHost())) {
+            throw new IllegalArgumentException(
+                    "Refusing insecure ws:// connection to non-local host. Use wss:// or set ALLOW_INSECURE_TRANSPORT=true for local/testing."
+            );
+        }
     }
 
     /**
@@ -137,16 +164,9 @@ public class ServerConnectionService {
         }
         
         try {
-            String serverUrl = getAuthenticatedUrl();
-            logger.info("Attempting to connect to: {}", 
-                    authToken != null ? baseServerUrl + "?token=***" : baseServerUrl);
-
-            // Validate URL format
-            if (!serverUrl.startsWith("ws://") && !serverUrl.startsWith("wss://")) {
-                throw new IllegalArgumentException("Invalid WebSocket URL - must start with ws:// or wss://");
-            }
-
-            URI uri = new URI(serverUrl);
+            logger.info("Attempting to connect to: {}", baseServerUrl);
+            URI uri = new URI(baseServerUrl);
+            validateTransportPolicy(uri);
             logger.debug("Host: {}:{}, Path: {}", uri.getHost(), uri.getPort(), uri.getPath());
 
             // Create WebSocket handler
@@ -195,7 +215,7 @@ public class ServerConnectionService {
 
             // Connect using execute method (Spring 6.0+ API)
             logger.debug("Starting WebSocket handshake...");
-            CompletableFuture<WebSocketSession> future = webSocketClient.execute(handler, null, uri);
+            CompletableFuture<WebSocketSession> future = webSocketClient.execute(handler, buildHandshakeHeaders(), uri);
             
             // Wait for connection with timeout
             try {

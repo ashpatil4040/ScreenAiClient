@@ -1,142 +1,156 @@
-# ScreenAI Client - Secure Cross-Platform Screen Sharing
+# ScreenAI Client — Secure Cross-Platform Screen Sharing
 
 > A **secure JavaFX desktop client** for real-time screen sharing with JWT authentication, room password protection, and hardware-accelerated encoding. **Supports macOS, Windows, and Linux.**
 
+> **For detailed security documentation, see the server's [SECURITY.md](../ScreenAi-security-server/docs/SECURITY.md)**
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | Client architecture, tech stack, data flow, thread model, encoder strategy |
+| [User Guide](docs/USER_GUIDE.md) | How to host, view, and manage streams with room security features |
+| [Setup Guide](docs/SETUP.md) | Prerequisites, .env configuration, platform-specific notes, all env variables |
+| [Security](docs/SECURITY.md) | Client-side security: AES-256-GCM storage, JWT auth flow, PBKDF2, dialogs |
+
 ![JavaFX 21](https://img.shields.io/badge/UI-JavaFX_21-blue) ![JavaCV 1.5.9](https://img.shields.io/badge/Video-JavaCV_1.5.9-orange) ![Spring Framework](https://img.shields.io/badge/Framework-Spring_6.x-green) ![WebSocket](https://img.shields.io/badge/Protocol-WebSocket-brightgreen) ![Java 21](https://img.shields.io/badge/Java-21-red) ![Cross Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-purple)
-
-## 📖 Table of Contents
-
-- [Overview](#overview)
-- [Security Features](#-security-features)
-- [Quick Start](#-quick-start)
-- [System Architecture](#system-architecture)
-- [Configuration](#-configuration)
-- [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Overview
 
-**ScreenAI Client** is a secure desktop application enabling real-time screen sharing with comprehensive authentication and bidirectional streaming support.
+**ScreenAI Client** is a secure desktop application enabling real-time screen sharing with comprehensive authentication and bidirectional streaming support. It uses a **split-panel home screen** with host and viewer controls, and **auto-connects** to the server from `.env` configuration on launch. When a viewer joins a room, the entire UI transitions to a **dedicated fullscreen viewer screen** with live video and real-time stats.
 
-### 🔴 **HOST Mode (Presenter)**
-- **Secure Authentication** - JWT-based login required before streaming
-- **Room Password Protection** - Create password-protected private rooms
-- **Access Code Display** - Auto-generated codes shown for protected rooms with copy button
-- **Viewer Management** - Approve, kick, or ban viewers
-- Encode to **H.264/MPEG-TS** using FFmpeg with hardware acceleration
-- Stream at **~28-30 FPS** with ultrafast/zerolatency preset
-- Support for multiple encoders: VideoToolbox (macOS), NVENC (NVIDIA), libx264 (CPU)
+### Host (Presenter)
+- JWT-based login required before streaming
+- Room password protection with auto-generated access codes
+- Viewer management — approve, kick, or ban viewers
+- H.264/MPEG-TS encoding using FFmpeg with hardware acceleration (VideoToolbox, NVENC, libx264)
+- ~28-30 FPS with ultrafast/zerolatency preset
 
-### 🔵 **VIEWER Mode (Watcher)**
-- **Secure Join** - Enter access code for password-protected rooms
-- **Room Password Dialog** - User-friendly dialog for entering security credentials
+### Viewer (Watcher)
+- Enter access code for password-protected rooms
 - Connect to host's room using Room ID
-- Decode using **FFmpegFrameGrabber** with batch processing (~12-15 FPS)
-- Display live video in JavaFX ImageView with real-time FPS metrics
+- **Fullscreen viewer screen** replaces the home screen on join — dark themed with top bar, live video, and bottom stats bar
+- H.264 decoding via FFmpegFrameGrabber with batch processing (~12-15 FPS)
+- One-click disconnect returns to home screen
 
-### 🔄 **Dual Mode (Bidirectional)**
-- Host and view streams simultaneously
-- Modern tabbed interface
-- Unified connection management
+### Split-Panel Home Screen
+- Host and viewer controls visible simultaneously (no tabs to switch)
+- Left panel: Blue gradient brand panel with sign-in buttons (before login) or **user profile with avatar, username, role, session status, and Sign Out** (after login)
+- Right panel: White card with host section, viewer section, and room info
+- Auto-connects from `.env` — no manual server input needed
 
 ---
 
-## 🔐 Security Features
+## Security Features
 
 ### Authentication
-- **JWT Token Authentication** - Secure login/register before connecting
-- **Access Token + Refresh Token** - 15 min access tokens with automatic refresh
-- **Encrypted Credential Storage** - AES-256-GCM encryption for saved credentials
-- **Remember Me** - Optional persistent login with secure storage
-- **Auto-Login** - Automatic authentication with saved credentials
+- **JWT Token Auth** — Login/register via secure dialog before any server interaction
+- **Access + Refresh Tokens** — 15 min access tokens with automatic refresh scheduled 1 min before expiry
+- **Token Refresh Retry** — 3 retries with exponential backoff (5s → 10s → 20s) on transient failures. Tokens only cleared on HTTP 401/403 (not on timeouts or 500s)
+- **Encrypted Storage** — AES-256-GCM encryption with PBKDF2-HMAC-SHA256 key derivation, stored at `~/.screenai/credentials.enc`
+- **Auto-Login** — Persisted refresh token used for automatic authentication on launch
+- **Token Rotation** — New refresh token issued on every refresh; old one invalidated
 
 ### Room Security
-- **Password Protection** - Optional password when creating rooms
-- **Access Codes** - Auto-generated codes for password-protected rooms (displayed in UI)
-- **Viewer Approval** - Optional manual approval for viewers
-- **Kick/Ban Viewers** - Remove unwanted viewers from your room
+- **Password Protection** — Create rooms with optional password (SHA-256 + salt on server)
+- **Access Codes** — 8-char alphanumeric codes for password-protected rooms (24-hour expiry)
+- **Viewer Approval** — Manual approve/deny workflow for incoming viewers
+- **Kick/Ban** — Remove or permanently block unwanted viewers
 
-### UI Components
-- **Login Dialog** - Modern dark-themed login/register popup
-- **Room Password Dialog** - Enter password or access code to join protected rooms
-- **Access Code Display** - Visible access code with copy button for hosts
+### Login Dialog
+- White card design with blue gradient header
+- Separate **Login** and **Sign Up** pages (toggle between them)
+- Client-side validation: username required, password min 8 chars, confirmation match on sign-up
+- Server address auto-configured from `.env` — no manual URL input
+- Duplicate dialog prevention — `loginDialogShowing` flag prevents concurrent popups
+
+> **Full security details →** [SECURITY.md](docs/SECURITY.md) and server [SECURITY.md](../ScreenAi-security-server/docs/SECURITY.md)
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- **Java 21+** (verify with `java -version`)
-- **Maven 3.9+** (included as `./mvnw`)
-- **ScreenAI-Server** running on `ws://localhost:8080/screenshare`
+- **Java 21+** (`java -version`)
+- **Maven 3.x+** (`mvn -version`)
+- **ScreenAI Server** running on `localhost:8080`
 
 ### 1. Configure Environment
 
-Create a `.env` file in the project root:
+Create `.env` in the project root:
 
 ```env
-# Server Configuration
-SERVER_URL=ws://localhost:8080/screenshare
-HTTP_URL=http://localhost:8080
+# Server Connection (auto-connect on launch)
+SERVER_HOST=localhost
+SERVER_PORT=8080
+
+# Server URLs
+SCREENAI_SERVER_URL=ws://localhost:8080/screenshare
+SCREENAI_HTTP_URL=http://localhost:8080
 
 # Security
 TOKEN_ENCRYPTION_KEY=your-32-character-encryption-key!
 CREDENTIALS_STORAGE_DIR=~/.screenai
 ```
 
-### 2. Run the Application
+### 2. Run
 
-**Using Maven Wrapper (Recommended):**
 ```bash
-chmod +x mvnw
-./mvnw javafx:run
+cd ScreenAiClient-security-client
+mvn org.openjfx:javafx-maven-plugin:0.0.8:run
 ```
 
-**Alternative:**
-```bash
-./mvnw compile exec:java -Dexec.mainClass="App"
-```
+### 3. First Launch
 
-### 3. First Time Setup
-
-1. **Login Dialog appears** - Enter credentials
-2. **Register** - Create a new account (first time)
-3. **Login** - Authenticate with your credentials
-4. **Connect** - Click Connect button to join server
-5. **Start Sharing** - Create a room and share your screen!
+1. App auto-connects to `SERVER_HOST:SERVER_PORT`
+2. Login dialog appears — create an account or sign in
+3. After login, left panel shows your **user profile** (avatar, name, role, session status)
+4. Start hosting or viewing immediately — both sections are visible
+5. As a viewer, joining a room transitions to a fullscreen viewer screen
 
 ---
 
-## 📱 Using the Application
+## Application Modes
 
-### As a **HOST (Presenter)**
+| Mode | Launch | Description |
+|------|--------|-------------|
+| **Default** (split-panel) | `mvn org.openjfx:javafx-maven-plugin:0.0.8:run` | Split-panel UI with simultaneous host + viewer controls |
+| **Classic** (tabbed) | Pass `--classic` flag | Tabbed interface with Share Screen / Watch Stream tabs |
 
-```
-1. Launch application → Login Dialog appears
-2. Enter username/password → Click Login (or Register first time)
-3. Click [🔌 Connect] → Connects to server
-4. (Optional) Enter custom Room ID
-5. Click [▶ Start Sharing]
-6. If room is password-protected:
-   - Access Code appears in "Your Room" section
-   - Click [📋 Copy] to copy access code
-7. Share Room ID + Access Code with viewers
-```
+---
 
-### As a **VIEWER (Watcher)**
+## Using the Application
+
+### As a Host
 
 ```
-1. Launch application → Login Dialog appears
-2. Enter username/password → Click Login
-3. Click [🔌 Connect] → Connects to server
-4. Switch to "Watch Stream" tab
-5. Enter Room ID from host
-6. Click [👁 Watch]
-7. If room is password-protected:
-   - Password Dialog appears
-   - Enter Access Code received from host
-8. Watch live stream!
+1. Launch app → auto-connects to server
+2. Login dialog appears → Sign Up (first time) or Login
+3. Enter custom Room ID (optional)
+4. Click [Start Sharing]
+5. If room is password-protected:
+   - Access code appears in room info section
+   - Click [Copy] to share with viewers
+6. Share Room ID + Access Code with viewers
+```
+
+### As a Viewer
+
+```
+1. Launch app → auto-connects to server
+2. Login → enter credentials
+3. Enter Room ID from host in the viewer section
+4. Click [Join session]
+5. If room is password-protected:
+   - Password dialog appears
+   - Enter access code from host
+6. UI transitions to fullscreen viewer screen:
+   - Dark top bar with LIVE indicator and room code
+   - Full-size video player area
+   - Bottom stats bar (Room, FPS, Data, Latency, Quality)
+7. Click [✕ Disconnect] to return to home screen
 ```
 
 ---
@@ -144,173 +158,143 @@ chmod +x mvnw
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      ScreenAI Client (Secure)                        │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌────────────────────────────────────────────────────────────────┐ │
-│  │                    Authentication Layer                         │ │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────┐  │ │
-│  │  │ LoginDialog      │  │ TokenStorage     │  │ AuthService  │  │ │
-│  │  │ • Username/Pass  │  │ • AES-256-GCM    │  │ • JWT Auth   │  │ │
-│  │  │ • Register       │  │ • Refresh Token  │  │ • Auto-Login │  │ │
-│  │  │ • Remember Me    │  │ • Persist Creds  │  │ • Token Mgmt │  │ │
-│  │  └──────────────────┘  └──────────────────┘  └──────────────┘  │ │
-│  └────────────────────────────────────────────────────────────────┘ │
-│                                                                      │
-│  ┌──────────────────────┐        ┌──────────────────────┐          │
-│  │    HOST MODE         │        │    VIEWER MODE        │          │
-│  │                      │        │                       │          │
-│  │  ScreenCaptureService│        │  RoomPasswordDialog   │          │
-│  │       ↓              │        │  (Enter Access Code)  │          │
-│  │  VideoEncoderFactory │        │       ↓               │          │
-│  │  (Hardware Accel)    │        │  H264DecoderService   │          │
-│  │       ↓              │        │       ↓               │          │
-│  │  Access Code Display │        │  JavaFX ImageView     │          │
-│  │  (Copy to Clipboard) │        │                       │          │
-│  └──────────────────────┘        └──────────────────────┘          │
-│                                                                      │
-│  ┌────────────────────────────────────────────────────────────────┐ │
-│  │           DualModeMainController (JavaFX FXML)                  │ │
-│  │  • Tabbed Interface (Share Screen / Watch Stream)               │ │
-│  │  • Access Code Display Section (for hosts)                      │ │
-│  │  • Connection Management with Auth                              │ │
-│  └────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                       ScreenAI Client                                 │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  ┌── UI Layer ──────────────────────────────────────────────────────┐ │
+│  │  Root: StackPane with two layers:                                │ │
+│  │    ├── homeScreen (ScrollPane) — split-panel (DEFAULT)           │ │
+│  │    │     ├── Left: Blue gradient brand panel                     │ │
+│  │    │     │     ├── Auth buttons (before login)                   │ │
+│  │    │     │     └── User profile: avatar, name, role, sign out    │ │
+│  │    │     └── Right: White card (host + viewer controls)          │ │
+│  │    └── viewerScreen (VBox) — fullscreen viewer (on join)         │ │
+│  │          ├── Top bar: LIVE indicator, room code, disconnect      │ │
+│  │          ├── Video area: full-height with ImageView              │ │
+│  │          └── Bottom stats: Room, FPS, Data, Latency, Quality    │ │
+│  │  LoginDialog — white card, separate Login/Sign Up pages          │ │
+│  │  RoomPasswordDialog — access code / password entry               │ │
+│  └──────────────────────────────────────────────────────────────────┘ │
+│                                                                       │
+│  ┌── Services ──────────────────────────────────────────────────────┐ │
+│  │  AuthenticationService  — JWT auth + refresh retry (3x backoff)  │ │
+│  │  TokenStorageService    — AES-256-GCM encrypted persistence     │ │
+│  │  ServerConnectionService — WebSocket client (Tyrus)              │ │
+│  │  ScreenCaptureService   — FFmpeg capture + H.264 encode         │ │
+│  │  H264DecoderService     — FFmpeg decode + JavaFX display        │ │
+│  │  FrameBufferService     — Video frame queue (90 frames)         │ │
+│  │  PerformanceMonitorService — FPS, CPU, memory metrics           │ │
+│  └──────────────────────────────────────────────────────────────────┘ │
+│                                                                       │
+│  ┌── Encoders ──────────────────────────────────────────────────────┐ │
+│  │  VideoToolbox (macOS GPU) → NVENC (NVIDIA GPU) → libx264 (CPU)  │ │
+│  └──────────────────────────────────────────────────────────────────┘ │
+│                                                                       │
+│  ┌── Config ────────────────────────────────────────────────────────┐ │
+│  │  EnvConfig (singleton) — .env loader with SERVER_HOST/PORT      │ │
+│  └──────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
                               │
                               │ WebSocket (ws://) + JWT Auth
-                              │ Binary H.264 + JSON Control
-                              ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                     ScreenAI Server (Secure)                         │
-│              (Spring WebFlux + Netty + JWT Auth)                    │
-│                                                                      │
-│  ws://localhost:8080/screenshare                                    │
-│                                                                      │
-│  • JWT Authentication Required                                       │
-│  • Room Password Protection                                          │
-│  • Access Code Generation                                            │
-│  • Rate Limiting & IP Blocking                                       │
-└─────────────────────────────────────────────────────────────────────┘
+                              │ Binary H.264/MPEG-TS + JSON Control
+                              ▼
+                    ScreenAI Server (port 8080)
 ```
 
 ---
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
 src/main/java/
-├── App.java                          # Application entry (selects mode)
-├── ScreenAIClientApplication.java    # Spring Boot + JavaFX launcher
+├── App.java                          # JavaFX Application entry point
+├── ScreenAIClientApplication.java    # Spring context (NOT Spring Boot)
 ├── config/
-│   └── EnvConfig.java                # Environment configuration loader
+│   └── EnvConfig.java                # Singleton .env loader (SERVER_HOST, SERVER_PORT, etc.)
 ├── controller/
-│   ├── DualModeMainController.java   # Main UI controller (dual mode)
-│   ├── DualModeController.java       # Business logic for dual mode
+│   ├── MainController.java           # Default split-panel controller (auto-connect)
+│   ├── DualModeMainController.java   # Classic tabbed controller (--classic mode)
+│   ├── DualModeController.java       # Bidirectional business logic
 │   ├── HostController.java           # Host streaming logic
 │   ├── ViewerController.java         # Viewer streaming logic
-│   ├── LoginDialog.java              # Login/Register popup
-│   ├── RoomPasswordDialog.java       # Room security dialog
-│   └── MainController.java           # Legacy main controller
+│   ├── LoginDialog.java              # White card login/sign-up dialog
+│   └── RoomPasswordDialog.java       # Room security dialog
 ├── encoder/
-│   ├── VideoEncoderFactory.java      # Encoder selection strategy
+│   ├── VideoEncoderFactory.java      # Selects best available encoder
 │   ├── VideoEncoderStrategy.java     # Encoder interface
 │   ├── H264VideoToolboxEncoder.java  # macOS GPU encoder
 │   ├── NvencEncoder.java             # NVIDIA GPU encoder
 │   └── LibX264Encoder.java           # CPU fallback encoder
 ├── model/
-│   ├── ScreenSource.java             # Screen capture source
-│   └── PerformanceMetrics.java       # Streaming metrics
+│   ├── ScreenSource.java             # Screen capture source (builder)
+│   └── PerformanceMetrics.java       # Streaming metrics (builder)
 └── service/
-    ├── AuthenticationService.java    # JWT auth client
-    ├── TokenStorageService.java      # Encrypted token storage
-    ├── ServerConnectionService.java  # WebSocket client
-    ├── ScreenCaptureService.java     # Screen capture
-    ├── H264DecoderService.java       # Video decoder
-    ├── FrameBufferService.java       # Frame buffering
-    ├── ScreenSourceDetector.java     # Display detection
-    └── PerformanceMonitorService.java
+    ├── AuthenticationService.java    # JWT auth + 3-retry refresh with backoff
+    ├── TokenStorageService.java      # AES-256-GCM encrypted credential storage
+    ├── ServerConnectionService.java  # WebSocket client (Tyrus)
+    ├── ScreenCaptureService.java     # Two-thread capture + encode
+    ├── H264DecoderService.java       # Accumulated chunk decoder
+    ├── FrameBufferService.java       # Frame queue (90 capacity)
+    ├── ScreenSourceDetector.java     # AWT display detection
+    └── PerformanceMonitorService.java # FPS, CPU, memory tracking
 
 src/main/resources/
-├── application.yml                   # Spring configuration
+├── application.yml                   # Spring config (fallback values)
 └── ui/
-    ├── dual-mode.fxml                # Dual mode UI (with access code section)
-    ├── main.fxml                     # Legacy UI
-    └── styles.css                    # UI styling
+    ├── main.fxml                     # Split-panel UI (DEFAULT)
+    ├── dual-mode.fxml                # Tabbed UI (--classic)
+    └── styles.css                    # Modern light theme
 ```
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
-### Environment Variables (.env)
+### .env Variables
 
-```env
-# Server URLs
-SERVER_URL=ws://localhost:8080/screenshare
-HTTP_URL=http://localhost:8080
-
-# Security Settings
-TOKEN_ENCRYPTION_KEY=your-32-char-key-for-aes-256!!
-CREDENTIALS_STORAGE_DIR=~/.screenai
-
-# Optional: Debug
-DEBUG_FFMPEG=false
-```
-
-### application.yml
-
-```yaml
-screenai:
-  server:
-    websocket-url: ${SERVER_URL:ws://localhost:8080/screenshare}
-    http-url: ${HTTP_URL:http://localhost:8080}
-  
-  security:
-    encryption-key: ${TOKEN_ENCRYPTION_KEY}
-    storage-dir: ${CREDENTIALS_STORAGE_DIR:~/.screenai}
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVER_HOST` | `localhost` | Server hostname for auto-connect |
+| `SERVER_PORT` | `8080` | Server port for auto-connect |
+| `SCREENAI_SERVER_URL` | `ws://localhost:8080/screenshare` | WebSocket endpoint |
+| `SCREENAI_HTTP_URL` | `http://localhost:8080` | HTTP API endpoint |
+| `TOKEN_ENCRYPTION_KEY` | (required) | 32-char key for AES-256-GCM |
+| `CREDENTIALS_STORAGE_DIR` | `~/.screenai` | Encrypted credential location |
+| `DEBUG_FFMPEG` | `false` | FFmpeg debug logging |
 
 ---
 
-## 🖥️ Hardware-Accelerated Encoding
+## Hardware-Accelerated Encoding
 
-| Platform | Hardware Encoder | CPU Reduction | Fallback |
-|----------|-----------------|---------------|----------|
-| **macOS** | VideoToolbox (GPU) | ~70% | libx264 |
-| **Windows** | NVENC (NVIDIA GPU) | ~80% | libx264 |
-| **Linux** | NVENC (NVIDIA GPU) | ~80% | libx264 |
+| Platform | GPU Encoder | CPU Reduction | Fallback |
+|----------|------------|---------------|----------|
+| macOS | VideoToolbox | ~70% | libopenh264 |
+| Windows | NVENC (NVIDIA) | ~80% | libopenh264 |
+| Linux | NVENC (NVIDIA) | ~80% | libopenh264 |
 
 ---
 
-## 🔧 Troubleshooting
-
-### Login Dialog Too Small
-The dialog should now auto-size correctly. If not, drag to resize.
+## Troubleshooting
 
 ### "Connection Failed" Error
-1. Ensure server is running: `./mvnw spring-boot:run` in server directory
-2. Check server URL in `.env` matches server address
+1. Ensure server is running: `cd ../ScreenAi-security-server && mvn spring-boot:run`
+2. Check `SERVER_HOST` and `SERVER_PORT` in `.env`
 3. Verify firewall allows port 8080
 
-### "Authentication Required" Message
-1. You must login before connecting
-2. Click Connect → Login dialog appears
-3. Register a new account or login with existing credentials
+### Token Refresh Issues
+- App retries refresh 3 times with exponential backoff (5s → 10s → 20s)
+- If all retries fail, login dialog appears
+- Transient errors (timeout, 500) are retried; definitive rejections (401, 403) are not
 
-### Access Code Not Showing
-Access codes only appear for **password-protected rooms**:
-1. Create a room with a password
-2. Server returns `accessCode` in response
-3. Code displays in "Your Room" section
+### No Video Output (Viewer)
+- Ensure host is actively streaming
+- Check Room ID matches exactly
+- Verify access code if room is password-protected
 
-### Token Expired
-- Access tokens expire after 15 minutes
-- App automatically refreshes using refresh token
-- If refresh fails, login dialog appears
+### Login Dialog Appears Unexpectedly
+- This occurs when token refresh exhausts all 3 retries
+- Check server availability and network connectivity
+- Only one dialog appears at a time (duplicate prevention)
 
 ---
-
-## 📄 License
-
-MIT License - See [LICENSE](LICENSE) file

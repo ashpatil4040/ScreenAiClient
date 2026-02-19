@@ -10,22 +10,21 @@ import java.util.List;
 
 /**
  * ScreenAI Client - JavaFX + Spring Application
- * Supports both classic mode (separate host/viewer) and dual mode (bidirectional)
+ * Default: new split-panel UI (main.fxml).  --classic: tabbed dual-mode UI.
  */
 public class App extends Application {
     private ConfigurableApplicationContext springContext;
-    private static boolean useDualMode = true; // Default to dual mode
+    private static boolean useClassicMode = false; // Default to new UI
 
     @Override
     public void start(Stage stage) throws IOException {
         // Check command line arguments for mode selection
         List<String> args = getParameters().getRaw();
         if (args.contains("--classic")) {
-            useDualMode = false;
-            System.out.println("🔧 Running in CLASSIC mode (separate host/viewer)");
+            useClassicMode = true;
+            System.out.println("🔧 Running in CLASSIC mode (tabbed dual-mode UI)");
         } else {
-            useDualMode = true;
-            System.out.println("🔧 Running in DUAL mode (bidirectional screen sharing)");
+            System.out.println("🔧 Running in DEFAULT mode (new split-panel UI)");
         }
 
         // Initialize Spring context for dependency injection
@@ -33,13 +32,12 @@ public class App extends Application {
         ScreenAIClientApplication.startSpringContext();
         springContext = ScreenAIClientApplication.getSpringContext();
         System.out.println("✅ Spring context initialized");
-        
+
         // Load appropriate FXML based on mode
         FXMLLoader fxmlLoader;
-        if (useDualMode) {
-            System.out.println("� Loading Dual Mode UI...");
+        if (useClassicMode) {
+            System.out.println("📺 Loading Classic (Dual-Mode) UI...");
             fxmlLoader = new FXMLLoader(App.class.getResource("/ui/dual-mode.fxml"));
-            // Dual mode controller is NOT a Spring bean, create it manually
             fxmlLoader.setControllerFactory(controllerClass -> {
                 if (controllerClass == DualModeMainController.class) {
                     return new DualModeMainController();
@@ -47,13 +45,18 @@ public class App extends Application {
                 return springContext.getBean(controllerClass);
             });
         } else {
-            System.out.println("📺 Loading Classic Mode UI...");
+            System.out.println("🚀 Loading New UI...");
             fxmlLoader = new FXMLLoader(App.class.getResource("/ui/main.fxml"));
-            fxmlLoader.setControllerFactory(springContext::getBean);
+            fxmlLoader.setControllerFactory(controllerClass -> {
+                if (controllerClass == MainController.class) {
+                    return new MainController();
+                }
+                return springContext.getBean(controllerClass);
+            });
         }
 
         Scene scene = new Scene(fxmlLoader.load(), 1200, 800);
-        stage.setTitle("ScreenAI - " + (useDualMode ? "Bidirectional Screen Sharing" : "Screen Sharing"));
+        stage.setTitle("ScreenAI - Secure Screen Sharing");
         stage.setScene(scene);
 
         // Handle window close

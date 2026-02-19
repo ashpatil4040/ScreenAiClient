@@ -1,5 +1,6 @@
 package controller;
 
+import config.EnvConfig;
 import service.ServerConnectionService;
 import service.ScreenCaptureService;
 import service.TokenStorageService;
@@ -110,7 +111,8 @@ public class HostController {
         System.out.println("📍 serverPort: " + serverPort);
 
         try {
-            String serverUrl = "ws://" + serverHost + ":" + serverPort + "/screenshare";
+            EnvConfig config = EnvConfig.getInstance();
+            String serverUrl = config.buildWebSocketUrl(serverHost, serverPort, "/screenshare");
             System.out.println("🌐 Full WebSocket URL: " + serverUrl);
             System.out.println("✅ URL constructed successfully");
 
@@ -126,7 +128,7 @@ public class HostController {
             });
             
             // Update auth service base URL
-            String httpUrl = "http://" + serverHost + ":" + serverPort;
+            String httpUrl = config.buildHttpBaseUrl(serverHost, serverPort);
             authService.setServerBaseUrl(httpUrl);
 
             // Set up handlers

@@ -27,8 +27,14 @@ public class AuthenticationService {
     
     // Refresh token 1 minute before expiry
     private static final long REFRESH_BUFFER_MS = 60_000;
+    // Server contract returns expiresIn in seconds.
+    private static final long DEFAULT_EXPIRES_IN_SECONDS = 900;
+    // Retry settings for token refresh
+    private static final int MAX_REFRESH_RETRIES = 3;
+    private static final long RETRY_BASE_DELAY_MS = 5_000; // 5s, 10s, 20s backoff
 
     private final HttpClient httpClient;
+    private final EnvConfig envConfig;
     private final TokenStorageService tokenStorage;
     private final ScheduledExecutorService scheduler;
     private ScheduledFuture<?> refreshTask;
@@ -41,12 +47,13 @@ public class AuthenticationService {
         this.tokenStorage = tokenStorage;
         
         // Load server URL from environment config
-        EnvConfig config = EnvConfig.getInstance();
-        this.serverBaseUrl = config.getHttpUrl();
+        this.envConfig = EnvConfig.getInstance();
+        this.serverBaseUrl = normalizeServerBaseUrl(envConfig.getHttpUrl());
+        validateServerBaseUrl(this.serverBaseUrl);
         
         this.httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
-                .connectTimeout(Duration.ofSeconds(config.getHttpConnectTimeoutSeconds()))
+                .connectTimeout(Duration.ofSeconds(envConfig.getHttpConnectTimeoutSeconds()))
                 .build();
         
         // Single-threaded scheduler for token refresh
@@ -63,7 +70,9 @@ public class AuthenticationService {
      * Set the server base URL.
      */
     public void setServerBaseUrl(String url) {
-        this.serverBaseUrl = url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        String normalized = normalizeServerBaseUrl(url);
+        validateServerBaseUrl(normalized);
+        this.serverBaseUrl = normalized;
         log.info("Server URL set to: {}", serverBaseUrl);
     }
 
@@ -113,6 +122,11 @@ public class AuthenticationService {
         
         refreshTask = scheduler.schedule(this::performScheduledRefresh, delayMs, TimeUnit.MILLISECONDS);
     }
+
+    private long toExpiryMillis(long expiresInSeconds) {
+        long safeSeconds = expiresInSeconds > 0 ? expiresInSeconds : DEFAULT_EXPIRES_IN_SECONDS;
+        return TimeUnit.SECONDS.toMillis(safeSeconds);
+    }
     
     /**
      * Cancel any pending refresh task.
@@ -125,28 +139,61 @@ public class AuthenticationService {
     }
     
     /**
-     * Perform scheduled token refresh.
+     * Perform scheduled token refresh with retry logic.
      */
     private void performScheduledRefresh() {
-        log.info("Performing scheduled token refresh...");
-        
+        performScheduledRefreshWithRetry(1);
+    }
+
+    /**
+     * Retry-aware token refresh. Retries up to MAX_REFRESH_RETRIES times with
+     * exponential backoff before giving up and prompting re-login.
+     */
+    private void performScheduledRefreshWithRetry(int attempt) {
+        log.info("Performing scheduled token refresh (attempt {}/{})...", attempt, MAX_REFRESH_RETRIES);
+
         refreshToken().thenAccept(result -> {
             if (result.success()) {
-                log.info("Scheduled token refresh successful");
+                log.info("Scheduled token refresh successful on attempt {}", attempt);
+            } else if (attempt < MAX_REFRESH_RETRIES && isRetryableFailure(result.message())) {
+                long delay = RETRY_BASE_DELAY_MS * (1L << (attempt - 1)); // exponential backoff
+                log.warn("Token refresh attempt {} failed ({}), retrying in {}s...",
+                        attempt, result.message(), delay / 1000);
+                scheduler.schedule(() -> performScheduledRefreshWithRetry(attempt + 1),
+                        delay, TimeUnit.MILLISECONDS);
             } else {
-                log.warn("Scheduled token refresh failed: {}", result.message());
-                // Notify callback that re-authentication is needed
+                log.warn("Token refresh failed after {} attempt(s): {}", attempt, result.message());
                 if (onAuthenticationRequired != null) {
                     onAuthenticationRequired.accept(result.message());
                 }
             }
         }).exceptionally(ex -> {
-            log.error("Scheduled token refresh error: {}", ex.getMessage());
-            if (onAuthenticationRequired != null) {
-                onAuthenticationRequired.accept("Token refresh failed: " + ex.getMessage());
+            if (attempt < MAX_REFRESH_RETRIES) {
+                long delay = RETRY_BASE_DELAY_MS * (1L << (attempt - 1));
+                log.warn("Token refresh attempt {} error ({}), retrying in {}s...",
+                        attempt, ex.getMessage(), delay / 1000);
+                scheduler.schedule(() -> performScheduledRefreshWithRetry(attempt + 1),
+                        delay, TimeUnit.MILLISECONDS);
+            } else {
+                log.error("Token refresh failed after {} attempts: {}", attempt, ex.getMessage());
+                if (onAuthenticationRequired != null) {
+                    onAuthenticationRequired.accept("Token refresh failed: " + ex.getMessage());
+                }
             }
             return null;
         });
+    }
+
+    /**
+     * Determine if a refresh failure is transient and worth retrying.
+     * Connection errors and timeouts are retryable; explicit server rejections (invalid token) are not.
+     */
+    private boolean isRetryableFailure(String message) {
+        if (message == null) return true;
+        String lower = message.toLowerCase();
+        // Don't retry if the server explicitly rejected the token
+        return !lower.contains("invalid") && !lower.contains("expired")
+                && !lower.contains("revoked") && !lower.contains("unauthorized");
     }
     
     /**
@@ -268,12 +315,17 @@ public class AuthenticationService {
                         try {
                             JsonNode json = objectMapper.readTree(response.body());
                             String newAccessToken = json.get("accessToken").asText();
-                            long expiresIn = json.has("expiresIn") ? json.get("expiresIn").asLong() : 900000;
+                            String newRefreshToken = json.has("refreshToken") ? json.get("refreshToken").asText() : null;
+                            long expiresInSeconds = json.has("expiresIn")
+                                    ? json.get("expiresIn").asLong()
+                                    : DEFAULT_EXPIRES_IN_SECONDS;
+                            long expiresInMs = toExpiryMillis(expiresInSeconds);
 
-                            tokenStorage.updateAccessToken(newAccessToken, expiresIn);
+                            // Update both tokens — server rotates refresh token on each refresh
+                            tokenStorage.updateTokens(newAccessToken, newRefreshToken, expiresInMs);
                             
                             // Schedule next refresh
-                            scheduleTokenRefresh(expiresIn);
+                            scheduleTokenRefresh(expiresInMs);
 
                             log.info("Token refreshed successfully");
                             return new AuthResult(true, "Token refreshed", newAccessToken);
@@ -283,9 +335,13 @@ public class AuthenticationService {
                         }
                     } else {
                         String errorMessage = parseErrorMessage(response.body());
-                        log.warn("Token refresh failed: {}", errorMessage);
-                        // Clear tokens if refresh failed
-                        tokenStorage.clearTokens();
+                        log.warn("Token refresh failed (HTTP {}): {}", response.statusCode(), errorMessage);
+                        // Only clear tokens on definitive rejection (401/403)
+                        // Transient errors (500, timeout, etc.) should allow retry
+                        if (response.statusCode() == 401 || response.statusCode() == 403) {
+                            log.warn("Server rejected refresh token — clearing stored tokens");
+                            tokenStorage.clearTokens();
+                        }
                         return new AuthResult(false, errorMessage, null);
                     }
                 })
@@ -419,12 +475,15 @@ public class AuthenticationService {
                 JsonNode json = objectMapper.readTree(response.body());
                 String accessToken = json.get("accessToken").asText();
                 String refreshToken = json.has("refreshToken") ? json.get("refreshToken").asText() : null;
-                long expiresIn = json.has("expiresIn") ? json.get("expiresIn").asLong() : 900000;
+                long expiresInSeconds = json.has("expiresIn")
+                        ? json.get("expiresIn").asLong()
+                        : DEFAULT_EXPIRES_IN_SECONDS;
+                long expiresInMs = toExpiryMillis(expiresInSeconds);
 
-                tokenStorage.storeTokens(accessToken, refreshToken, expiresIn, username, rememberMe);
+                tokenStorage.storeTokens(accessToken, refreshToken, expiresInMs, username, rememberMe);
                 
                 // Schedule automatic token refresh
-                scheduleTokenRefresh(expiresIn);
+                scheduleTokenRefresh(expiresInMs);
 
                 log.info("Authentication successful for user: {}", username);
                 return new AuthResult(true, "Success", accessToken);
@@ -468,6 +527,40 @@ public class AuthenticationService {
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
+    }
+
+    private String normalizeServerBaseUrl(String url) {
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("Server base URL cannot be empty");
+        }
+        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    }
+
+    private boolean isLoopbackHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String normalized = host.trim().toLowerCase();
+        return "localhost".equals(normalized) ||
+                "127.0.0.1".equals(normalized) ||
+                "::1".equals(normalized) ||
+                "[::1]".equals(normalized) ||
+                "0:0:0:0:0:0:0:1".equals(normalized);
+    }
+
+    private void validateServerBaseUrl(String url) {
+        URI uri = URI.create(url);
+        String scheme = uri.getScheme();
+        if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
+            throw new IllegalArgumentException("Invalid auth URL scheme. Use http:// or https://");
+        }
+        if ("http".equalsIgnoreCase(scheme) &&
+                !envConfig.isAllowInsecureTransport() &&
+                !isLoopbackHost(uri.getHost())) {
+            throw new IllegalArgumentException(
+                    "Refusing insecure http:// auth endpoint on non-local host. Use https:// or set ALLOW_INSECURE_TRANSPORT=true for local/testing."
+            );
+        }
     }
 
     // ==================== Result Record ====================

@@ -4,6 +4,8 @@ import io.github.cdimascio.dotenv.Dotenv;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
+
 /**
  * Environment configuration loader for the ScreenAI Client.
  * Loads configuration from .env file and provides type-safe access to settings.
@@ -16,6 +18,8 @@ public class EnvConfig {
     private final Dotenv dotenv;
 
     // Server connection
+    private final String serverHost;
+    private final int serverPort;
     private final String serverUrl;
     private final String httpUrl;
     
@@ -47,6 +51,10 @@ public class EnvConfig {
     // Security
     private final String tokenEncryptionKey;
     private final String credentialsStorageDir;
+    private final boolean usingDefaultEncryptionKey;
+    private final boolean allowInsecureTransport;
+    private final String webSocketScheme;
+    private final String httpScheme;
 
     private EnvConfig() {
         log.info("Loading environment configuration from .env file...");
@@ -57,8 +65,13 @@ public class EnvConfig {
             .load();
         
         // Server connection
+        this.serverHost = getEnv("SERVER_HOST", "localhost");
+        this.serverPort = getEnvInt("SERVER_PORT", 8080);
         this.serverUrl = getEnv("SCREENAI_SERVER_URL", "ws://localhost:8080/screenshare");
         this.httpUrl = getEnv("SCREENAI_HTTP_URL", "http://localhost:8080");
+        this.webSocketScheme = extractScheme(this.serverUrl, "ws");
+        this.httpScheme = extractScheme(this.httpUrl, "http");
+        this.allowInsecureTransport = getEnvBoolean("ALLOW_INSECURE_TRANSPORT", false);
         
         // Reconnection settings
         this.reconnectAttempts = getEnvInt("RECONNECT_ATTEMPTS", 3);
@@ -86,13 +99,37 @@ public class EnvConfig {
         this.httpRequestTimeoutSeconds = getEnvInt("HTTP_REQUEST_TIMEOUT_SECONDS", 30);
         
         // Security
-        this.tokenEncryptionKey = getEnv("TOKEN_ENCRYPTION_KEY", "dev-encryption-key-32-chars-long!");
+        String encKey = getEnv("TOKEN_ENCRYPTION_KEY", "").trim();
+        if (encKey.isEmpty()) {
+            this.usingDefaultEncryptionKey = true;
+            this.tokenEncryptionKey = null;
+        } else if (encKey.length() < 32) {
+            this.usingDefaultEncryptionKey = true;
+            this.tokenEncryptionKey = null;
+            log.warn("⚠️  TOKEN_ENCRYPTION_KEY is too short ({} chars). Minimum recommended length is 32.", encKey.length());
+        } else {
+            this.usingDefaultEncryptionKey = false;
+            this.tokenEncryptionKey = encKey;
+        }
         this.credentialsStorageDir = getEnv("CREDENTIALS_STORAGE_DIR", "~/.screenai")
             .replace("~", System.getProperty("user.home"));
         
         log.info("Environment configuration loaded successfully");
+        log.info("Server Host: {}:{}", serverHost, serverPort);
         log.info("Server URL: {}", serverUrl);
         log.info("HTTP URL: {}", httpUrl);
+        log.info("Transport policy: {} insecure transport for non-local hosts", allowInsecureTransport ? "allowing" : "blocking");
+        
+        // Security warnings
+        if (usingDefaultEncryptionKey) {
+            log.warn("⚠️  TOKEN_ENCRYPTION_KEY is not configured securely.");
+            log.warn("⚠️  Remember-me credential persistence is disabled until a secure key is set.");
+        }
+        if (requiresSecureTransport(serverHost) &&
+                ("ws".equalsIgnoreCase(webSocketScheme) || "http".equalsIgnoreCase(httpScheme))) {
+            log.warn("⚠️  Non-local host detected with insecure default schemes (ws/http).");
+            log.warn("⚠️  Client will enforce wss/https unless ALLOW_INSECURE_TRANSPORT=true.");
+        }
     }
 
     /**
@@ -137,9 +174,44 @@ public class EnvConfig {
         return Boolean.parseBoolean(value);
     }
 
+    private String extractScheme(String url, String defaultScheme) {
+        try {
+            URI uri = URI.create(url);
+            String scheme = uri.getScheme();
+            return (scheme == null || scheme.isBlank()) ? defaultScheme : scheme.toLowerCase();
+        } catch (Exception e) {
+            log.warn("Invalid URL format for '{}', using default scheme '{}'", url, defaultScheme);
+            return defaultScheme;
+        }
+    }
+
+    private boolean isLoopbackHost(String host) {
+        if (host == null) {
+            return false;
+        }
+        String normalized = host.trim().toLowerCase();
+        return "localhost".equals(normalized) ||
+                "127.0.0.1".equals(normalized) ||
+                "::1".equals(normalized) ||
+                "[::1]".equals(normalized) ||
+                "0:0:0:0:0:0:0:1".equals(normalized);
+    }
+
+    private boolean requiresSecureTransport(String host) {
+        return !allowInsecureTransport && !isLoopbackHost(host);
+    }
+
     // ==================== Getters ====================
 
     // Server connection
+    public String getServerHost() {
+        return serverHost;
+    }
+
+    public int getServerPort() {
+        return serverPort;
+    }
+
     public String getServerUrl() {
         return serverUrl;
     }
@@ -150,6 +222,20 @@ public class EnvConfig {
     
     public String getAuthBaseUrl() {
         return httpUrl + "/api/auth";
+    }
+
+    public String buildWebSocketUrl(String host, int port, String path) {
+        String normalizedPath = (path == null || path.isBlank()) ? "/" : path;
+        if (!normalizedPath.startsWith("/")) {
+            normalizedPath = "/" + normalizedPath;
+        }
+        String scheme = requiresSecureTransport(host) ? "wss" : webSocketScheme;
+        return String.format("%s://%s:%d%s", scheme, host, port, normalizedPath);
+    }
+
+    public String buildHttpBaseUrl(String host, int port) {
+        String scheme = requiresSecureTransport(host) ? "https" : httpScheme;
+        return String.format("%s://%s:%d", scheme, host, port);
     }
 
     // Reconnection settings
@@ -224,5 +310,17 @@ public class EnvConfig {
 
     public String getCredentialsStorageDir() {
         return credentialsStorageDir;
+    }
+    
+    /**
+     * Check if using the default (insecure) encryption key.
+     * This should return false in production environments.
+     */
+    public boolean isUsingDefaultEncryptionKey() {
+        return usingDefaultEncryptionKey;
+    }
+
+    public boolean isAllowInsecureTransport() {
+        return allowInsecureTransport;
     }
 }

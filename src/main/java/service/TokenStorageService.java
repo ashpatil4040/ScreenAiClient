@@ -44,11 +44,14 @@ public class TokenStorageService {
     private static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_LENGTH = 128;
     private static final int KEY_LENGTH = 256;
+    private static final int SALT_LENGTH = 16;
     private static final int ITERATION_COUNT = 65536;
-    private static final byte[] SALT = "ScreenAI-Salt-2026".getBytes(StandardCharsets.UTF_8);
+    private static final String ENCRYPTED_FILE_PREFIX = "v2:";
+    // Legacy static salt for backward-compatible decryption of older credential files.
+    private static final byte[] LEGACY_SALT = "ScreenAI-Salt-2026".getBytes(StandardCharsets.UTF_8);
 
     private final Path storagePath;
-    private final SecretKey encryptionKey;
+    private final String encryptionPassword;
     private final SecureRandom secureRandom;
     
     // Cached tokens
@@ -72,7 +75,10 @@ public class TokenStorageService {
         
         this.storagePath = baseDir.resolve(TOKEN_FILE);
         this.secureRandom = new SecureRandom();
-        this.encryptionKey = deriveKey(config.getTokenEncryptionKey());
+        this.encryptionPassword = config.getTokenEncryptionKey();
+        if (config.isUsingDefaultEncryptionKey()) {
+            log.warn("Remember-me persistence is disabled until TOKEN_ENCRYPTION_KEY is securely configured.");
+        }
         
         // Load stored tokens on startup
         loadPersistedTokens();
@@ -115,6 +121,23 @@ public class TokenStorageService {
             persistTokens();
         }
         log.debug("Access token refreshed");
+    }
+
+    /**
+     * Update both access and refresh tokens after server-side token rotation.
+     * The server generates a new refresh token on each refresh call, invalidating the old one.
+     */
+    public void updateTokens(String newAccessToken, String newRefreshToken, long expiresInMs) {
+        this.accessToken = newAccessToken;
+        this.accessTokenExpiresAt = Instant.now().plusMillis(expiresInMs - 60000);
+        if (newRefreshToken != null && !newRefreshToken.isBlank()) {
+            this.refreshToken = newRefreshToken;
+        }
+        
+        if (rememberMe) {
+            persistTokens();
+        }
+        log.debug("Access token and refresh token updated (rotation)");
     }
 
     /**
@@ -194,10 +217,10 @@ public class TokenStorageService {
     /**
      * Derive AES-256 key from encryption password using PBKDF2.
      */
-    private SecretKey deriveKey(String password) {
+    private SecretKey deriveKey(String password, byte[] salt) {
         try {
             SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-            KeySpec spec = new PBEKeySpec(password.toCharArray(), SALT, ITERATION_COUNT, KEY_LENGTH);
+            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH);
             SecretKey tmp = factory.generateSecret(spec);
             return new SecretKeySpec(tmp.getEncoded(), "AES");
         } catch (Exception e) {
@@ -206,10 +229,15 @@ public class TokenStorageService {
         }
     }
 
+    private boolean hasEncryptionKey() {
+        return encryptionPassword != null && !encryptionPassword.isBlank();
+    }
+
     /**
      * Encrypt data using AES-256-GCM.
      */
-    private String encrypt(String plaintext) throws Exception {
+    private String encrypt(String plaintext, byte[] salt) throws Exception {
+        SecretKey encryptionKey = deriveKey(encryptionPassword, salt);
         byte[] iv = new byte[GCM_IV_LENGTH];
         secureRandom.nextBytes(iv);
         
@@ -230,8 +258,12 @@ public class TokenStorageService {
     /**
      * Decrypt data using AES-256-GCM.
      */
-    private String decrypt(String encrypted) throws Exception {
+    private String decrypt(String encrypted, byte[] salt) throws Exception {
+        SecretKey encryptionKey = deriveKey(encryptionPassword, salt);
         byte[] combined = Base64.getDecoder().decode(encrypted);
+        if (combined.length <= GCM_IV_LENGTH) {
+            throw new IllegalArgumentException("Encrypted payload is too short");
+        }
         
         // Extract IV and ciphertext
         byte[] iv = new byte[GCM_IV_LENGTH];
@@ -248,9 +280,21 @@ public class TokenStorageService {
     }
 
     /**
+     * Backward-compatible decryption for legacy file format that used a static salt.
+     */
+    private String decryptLegacy(String encrypted) throws Exception {
+        return decrypt(encrypted, LEGACY_SALT);
+    }
+
+    /**
      * Persist tokens to encrypted file (for remember-me).
      */
     private void persistTokens() {
+        if (!hasEncryptionKey()) {
+            log.warn("Skipping credential persistence: TOKEN_ENCRYPTION_KEY is missing or invalid.");
+            return;
+        }
+
         try {
             Map<String, Object> data = new HashMap<>();
             data.put("accessToken", accessToken != null ? accessToken : "");
@@ -260,9 +304,15 @@ public class TokenStorageService {
             data.put("rememberMe", rememberMe);
             
             String json = objectMapper.writeValueAsString(data);
-            String encrypted = encrypt(json);
+            byte[] salt = new byte[SALT_LENGTH];
+            secureRandom.nextBytes(salt);
+
+            String encrypted = encrypt(json, salt);
+            String payload = ENCRYPTED_FILE_PREFIX +
+                    Base64.getEncoder().encodeToString(salt) +
+                    ":" + encrypted;
             
-            Files.writeString(storagePath, encrypted, 
+            Files.writeString(storagePath, payload,
                     StandardOpenOption.CREATE, 
                     StandardOpenOption.TRUNCATE_EXISTING,
                     StandardOpenOption.WRITE);
@@ -285,8 +335,24 @@ public class TokenStorageService {
         }
         
         try {
-            String encrypted = Files.readString(storagePath);
-            String json = decrypt(encrypted);
+            String payload = Files.readString(storagePath).trim();
+            if (!hasEncryptionKey()) {
+                log.warn("Encrypted credentials found but TOKEN_ENCRYPTION_KEY is unavailable; auto-login disabled.");
+                return;
+            }
+
+            String json;
+            if (payload.startsWith(ENCRYPTED_FILE_PREFIX)) {
+                String[] parts = payload.split(":", 3);
+                if (parts.length != 3) {
+                    throw new IllegalArgumentException("Invalid encrypted credential format");
+                }
+                byte[] salt = Base64.getDecoder().decode(parts[1]);
+                json = decrypt(parts[2], salt);
+            } else {
+                // Legacy format fallback (single base64 blob with static salt).
+                json = decryptLegacy(payload);
+            }
             
             Map<String, Object> data = objectMapper.readValue(json, Map.class);
             

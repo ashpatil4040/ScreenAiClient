@@ -1,5 +1,6 @@
 package controller;
 
+import config.EnvConfig;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -101,7 +102,8 @@ public class ViewerController {
         System.out.println("🔌 [VIEWER] Connecting to server: " + serverHost + ":" + serverPort);
 
         try {
-            String serverUrl = "ws://" + serverHost + ":" + serverPort + "/screenshare";
+            EnvConfig config = EnvConfig.getInstance();
+            String serverUrl = config.buildWebSocketUrl(serverHost, serverPort, "/screenshare");
             System.out.println("🌐 WebSocket URL: " + serverUrl);
 
             serverConnection = new ServerConnectionService(serverUrl);

@@ -220,6 +220,14 @@ public class DualModeController {
     }
     
     /**
+     * Set the authentication state.
+     * Called by UI when login is completed via LoginDialog.
+     */
+    public void setAuthenticated(boolean authenticated) {
+        this.isAuthenticated = authenticated;
+    }
+    
+    /**
      * Get current username.
      */
     public Optional<String> getCurrentUsername() {
@@ -308,8 +316,9 @@ public class DualModeController {
      */
     private void connectWithToken(String serverHost, int serverPort, String token) {
         try {
-            // Use EnvConfig for server URL or construct from parameters
-            String serverUrl = "ws://" + serverHost + ":" + serverPort + "/screenshare";
+            EnvConfig config = EnvConfig.getInstance();
+            String serverUrl = config.buildWebSocketUrl(serverHost, serverPort, "/screenshare");
+            authService.setServerBaseUrl(config.buildHttpBaseUrl(serverHost, serverPort));
             serverConnection = new ServerConnectionService(serverUrl);
             
             // Set the authentication token

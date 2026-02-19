@@ -378,6 +378,9 @@ public class DualModeMainController implements Initializable {
                 // LoginDialog handles the actual authentication and returns AuthResult
                 // If we get here with a successful result, the user is authenticated
                 if (authResult.success()) {
+                    // Update the DualModeController's authentication state
+                    dualController.setAuthenticated(true);
+                    
                     // Authentication was already handled by LoginDialog
                     // Just update UI to reflect authenticated state
                     statusLabel.setText("✅ Authenticated successfully");

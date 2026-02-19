@@ -1,598 +1,569 @@
 package controller;
 
+import config.EnvConfig;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import service.AuthenticationService.AuthResult;
+import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
-import javafx.scene.layout.VBox;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
-import javafx.application.Platform;
-import javafx.animation.FadeTransition;
-import javafx.animation.TranslateTransition;
-import javafx.animation.ParallelTransition;
-import javafx.util.Duration;
-import javafx.geometry.Pos;
-import javafx.scene.Scene;
-import org.springframework.stereotype.Component;
-import service.ServerConnectionService;
-import service.ScreenCaptureService;
-import service.PerformanceMonitorService;
+import javafx.scene.layout.VBox;
+import javafx.stage.Stage;
 
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 /**
- * Main JavaFX Controller
- * Managed by Spring for FXML to find it
+ * Main UI Controller — wires the new split-panel FXML to DualModeController.
+ * Server connection is auto-configured from .env (EnvConfig).
+ * Supports simultaneous hosting + viewing.
  */
-@Component
 public class MainController {
-    // Services - will be manually set from App.java
-    @SuppressWarnings("unused")
-    private ServerConnectionService serverConnectionService;
-    @SuppressWarnings("unused")
-    private ScreenCaptureService screenCaptureService;
-    @SuppressWarnings("unused")
-    private PerformanceMonitorService performanceMonitorService;
 
-    // Role Selection
-    @FXML private RadioButton hostRadio;
-    @FXML private RadioButton viewerRadio;
-    private ToggleGroup roleToggleGroup;
+    // ── Left Panel ──
+    @FXML private VBox authButtonsSection;
+    @FXML private Button signInButton;
+    @FXML private Button googleSignUpButton;
+    @FXML private Hyperlink createAccountLink;
+    @FXML private VBox userProfileSection;
+    @FXML private Label userAvatarLabel;
+    @FXML private Label userDisplayName;
+    @FXML private Label userRoleLabel;
+    @FXML private Label sessionStatusLabel;
+    @FXML private Button signOutButton;
+    @FXML private Label securityStatusDot;
+    @FXML private Label securityStatusLabel;
 
-    // Host Section
+    // ── Connection status (auto-connect) ──
+    @FXML private Label connectionStatusLabel;
+
+    // ── Host Section ──
     @FXML private VBox hostSection;
-    @FXML private TextField hostServerInput;
-    @FXML private TextField hostPortInput;
-    @FXML private Button hostConnectButton;
     @FXML private Label hostConnectionStatusLabel;
     @FXML private TextField roomIdInput;
-    @FXML private ComboBox<String> screenSourceCombo;
-    @FXML private ComboBox<String> encoderCombo;
     @FXML private Button startButton;
     @FXML private Button stopButton;
-    @FXML private Label hostStatusLabel;
-    @FXML private Label viewerCountLabel;
-    @FXML private Label hostPerformanceLabel;
 
-    // Viewer Section
+    // ── Host Room Info (hidden until room created) ──
+    @FXML private VBox roomInfoSection;
+    @FXML private Label activeRoomLabel;
+    @FXML private Button copyRoomIdButton;
+    @FXML private Label viewerCountLabel;
+    @FXML private HBox accessCodeRow;
+    @FXML private Label accessCodeLabel;
+    @FXML private Button copyAccessCodeButton;
+    @FXML private Label hostFpsLabel;
+
+    // ── Viewer Section ──
     @FXML private VBox viewerSection;
-    @FXML private TextField viewerServerInput;
-    @FXML private TextField viewerPortInput;
-    @FXML private Button viewerConnectButton;
+    @FXML private Label viewerStatusLabel;
+    @FXML private VBox viewerConnectedPane;
+    @FXML private VBox viewerStreamPane;
     @FXML private TextField joinRoomIdInput;
     @FXML private Button joinRoomButton;
+    @FXML private ImageView videoImageView;
+    @FXML private VBox videoPlaceholder;
     @FXML private Label videoDisplayLabel;
-    @FXML private Label viewerStatusLabel;
-    @FXML private Label connectionStatusLabel;
     @FXML private Label roomStatusLabel;
     @FXML private Label viewerFpsLabel;
     @FXML private Label viewerDataLabel;
     @FXML private Label latencyLabel;
     @FXML private Label qualityLabel;
     @FXML private Button disconnectViewerButton;
-    @FXML private ImageView videoImageView;  // ImageView for displaying decoded video frames
-    @FXML private VBox videoPlaceholder;      // Placeholder shown when no video
 
-    // Controllers
-    private HostController hostController;
-    private ViewerController viewerController;
-    @SuppressWarnings("unused")
-    private final ExecutorService executorService = Executors.newFixedThreadPool(5);
-    
-    // Current role state - client can only be HOST or VIEWER, not both
-    private enum ClientRole { NONE, HOST, VIEWER }
-    private ClientRole currentRole = ClientRole.NONE;
-    private boolean roleActive = false;  // True when connected as host or viewer
+    // ── Viewer Fullscreen Screen ──
+    @FXML private ScrollPane homeScreen;
+    @FXML private VBox viewerScreen;
+    @FXML private StackPane viewerVideoContainer;
+    @FXML private ImageView viewerFullscreenVideo;
+    @FXML private VBox viewerFullscreenPlaceholder;
+    @FXML private Label viewerRoomCodeLabel;
+    @FXML private Button viewerBackButton;
+    @FXML private Label fsRoomLabel;
+    @FXML private Label fsFpsLabel;
+    @FXML private Label fsDataLabel;
+    @FXML private Label fsLatencyLabel;
+    @FXML private Label fsQualityLabel;
+
+    // ── Settings ──
+    @FXML private Button settingsButton;
+
+    // ── Backend ──
+    private DualModeController controller;
+    private volatile boolean loginDialogShowing = false;
+
+    // ═══════════════════════════════════════════════════════════
+    //  INITIALIZATION
+    // ═══════════════════════════════════════════════════════════
 
     @FXML
     public void initialize() {
-        System.out.println("=================================================");
-        System.out.println("🔧 Initializing MainController...");
-        System.out.println("=================================================");
-        
-        // Check critical UI elements
-        System.out.println("🔍 Checking FXML bindings...");
-        System.out.println("   hostConnectButton: " + (hostConnectButton == null ? "❌ NULL" : "✅ OK"));
-        System.out.println("   hostServerInput: " + (hostServerInput == null ? "❌ NULL" : "✅ OK"));
-        System.out.println("   hostPortInput: " + (hostPortInput == null ? "❌ NULL" : "✅ OK"));
-        System.out.println("   hostRadio: " + (hostRadio == null ? "❌ NULL" : "✅ OK"));
-        System.out.println("   viewerRadio: " + (viewerRadio == null ? "❌ NULL" : "✅ OK"));
+        System.out.println("🚀 MainController initializing (new UI)...");
 
-        // Setup role toggle group
-        roleToggleGroup = new ToggleGroup();
-        hostRadio.setToggleGroup(roleToggleGroup);
-        viewerRadio.setToggleGroup(roleToggleGroup);
-
-        // Role selection handlers
-        hostRadio.setOnAction(e -> {
-            System.out.println("🔴 Host radio selected");
-            switchToHost();
-        });
-        viewerRadio.setOnAction(e -> {
-            System.out.println("🔵 Viewer radio selected");
-            switchToViewer();
-        });
-
-        // Initialize controllers
-        System.out.println("🏗️ Creating HostController and ViewerController...");
-        hostController = new HostController(
-            (msg) -> updateHostStatus(msg, "#2196F3"),
-            this::updateHostPerformance,
-            this::updateViewerCount,
-            (isConnected) -> updateConnectionStatus(isConnected, "host")
+        // ── DualModeController backend ──
+        controller = new DualModeController();
+        controller.initialize(
+                this::onStatusUpdate,
+                this::onConnectionStatusChanged,
+                this::onHostPerformanceUpdate,
+                this::onViewerCountUpdate,
+                this::onHostingStateChanged,
+                this::onRoomCreated,
+                this::onFrameReceived,
+                this::onViewerPerformanceUpdate,
+                this::onViewingStateChanged,
+                this::onAuthenticationRequired,
+                this::onAuthenticationSuccess
         );
-        
-        // Set streaming state callback to enable/disable stop button
-        hostController.setOnStreamingStateUpdate(this::onStreamingStateChanged);
+        controller.setOnAccessCodeReceived(this::onAccessCodeReceived);
 
-        viewerController = new ViewerController(
-            (msg) -> updateViewerStatus(msg, "#2196F3"),
-            this::updateViewerFps,
-            this::updateViewerData,
-            this::updateVideoDisplay,
-            (isConnected) -> updateConnectionStatus(isConnected, "viewer")
-        );
-        System.out.println("✅ Controllers created");
+        // ── Generate default room ID ──
+        roomIdInput.setText("room-" + UUID.randomUUID().toString().substring(0, 8));
 
-        // Initialize Host UI
-        initializeHostUI();
+        // ── Set initial disabled state ──
+        setDisconnectedState();
 
-        // Initialize Viewer UI
-        initializeViewerUI();
+        // ── Try auto-login from saved credentials ──
+        controller.tryAutoLogin();
 
-        // Start with Host selected
-        hostRadio.setSelected(true);
-        switchToHost();
+        // ── Auto-connect to server from .env config ──
+        autoConnect();
 
-        System.out.println("=================================================");
-        System.out.println("✅ MainController initialized successfully");
-        System.out.println("=================================================");
+        // ── Bind fullscreen video to fill container ──
+        viewerFullscreenVideo.fitWidthProperty().bind(viewerVideoContainer.widthProperty().subtract(20));
+        viewerFullscreenVideo.fitHeightProperty().bind(viewerVideoContainer.heightProperty().subtract(20));
+
+        System.out.println("✅ MainController initialized");
     }
 
-    private void initializeHostUI() {
-        System.out.println("=================================================");
-        System.out.println("📺 Initializing Host UI...");
-        System.out.println("=================================================");
-        
-        // Check if button exists
-        if (hostConnectButton == null) {
-            System.err.println("❌ ERROR: hostConnectButton is NULL!");
-            System.err.println("❌ FXML binding failed!");
-            return;
-        }
-        System.out.println("✅ hostConnectButton exists: " + hostConnectButton);
-
-        // Load available screens
-        screenSourceCombo.getItems().clear();
-        screenSourceCombo.getItems().addAll("Display 1", "Display 2", "Window 1");
-        screenSourceCombo.setValue("Display 1");
-        System.out.println("✅ Screen sources loaded");
-
-        // Load available encoders
-        encoderCombo.getItems().clear();
-        encoderCombo.getItems().addAll("H.264 - Fast", "H.264 - Balanced", "H.264 - Quality");
-        encoderCombo.setValue("H.264 - Balanced");
-        System.out.println("✅ Encoders loaded");
-
-        // Connect button
-        System.out.println("🔧 Setting up Connect button handler...");
-        hostConnectButton.setOnAction(e -> {
-            System.out.println("=================================================");
-            System.out.println("🔌🔌🔌 CONNECT BUTTON CLICKED! 🔌🔌🔌");
-            System.out.println("=================================================");
-            connectAsHost();
-        });
-        System.out.println("✅ Connect button handler installed successfully");
-
-        // Start/Stop buttons
-        startButton.setOnAction(e -> {
-            System.out.println("▶️ Start button clicked!");
-            hostController.startStreaming(
-                hostServerInput.getText(),
-                Integer.parseInt(hostPortInput.getText()),
-                roomIdInput.getText().isEmpty() ? null : roomIdInput.getText(),
-                screenSourceCombo.getValue(),
-                encoderCombo.getValue()
-            );
-        });
-
-        stopButton.setOnAction(e -> hostController.stopStreaming());
-        stopButton.setDisable(true);
-
-        // Initialize room ID if empty
-        if (roomIdInput.getText().isEmpty()) {
-            roomIdInput.setText("room-" + UUID.randomUUID().toString().substring(0, 8));
-        }
-    }
-
-    private void initializeViewerUI() {
-        // Connect button
-        viewerConnectButton.setOnAction(e -> connectAsViewer());
-
-        // Join room button
-        joinRoomButton.setOnAction(e -> {
-            String roomId = joinRoomIdInput.getText().trim();
-            if (roomId.isEmpty()) {
-                updateViewerStatus("⚠️ Please enter a room ID", "#f44336");
-                return;
-            }
-            viewerController.joinRoom(
-                viewerServerInput.getText(),
-                Integer.parseInt(viewerPortInput.getText()),
-                roomId
-            );
-        });
-
-        // Disconnect button
-        disconnectViewerButton.setOnAction(e -> {
-            viewerController.disconnect();
-            // Show placeholder when disconnected
-            if (videoPlaceholder != null) {
-                videoPlaceholder.setVisible(true);
-            }
-            if (videoImageView != null) {
-                videoImageView.setImage(null);
-            }
-        });
-        
-        // Connect ImageView to ViewerController for video display
-        if (videoImageView != null) {
-            viewerController.setVideoImageView(videoImageView);
-            
-            // Set callback to hide placeholder when video starts
-            viewerController.setOnImageUpdate(image -> {
-                Platform.runLater(() -> {
-                    if (image != null && videoPlaceholder != null) {
-                        videoPlaceholder.setVisible(false);
-                    }
-                });
-            });
-            
-            System.out.println("✅ ImageView connected to ViewerController");
-        } else {
-            System.out.println("⚠️ videoImageView is null - video display won't work");
-        }
-    }
-
-    private void switchToHost() {
-        // Check if currently active as viewer - must disconnect first
-        if (currentRole == ClientRole.VIEWER && roleActive) {
-            System.out.println("⚠️ Cannot switch to Host while connected as Viewer");
-            // Show warning and revert selection
-            Platform.runLater(() -> {
-                viewerRadio.setSelected(true);
-                updateHostStatus("⚠️ Disconnect from viewer first!", "#f44336");
-            });
-            return;
-        }
-        
-        // Disconnect viewer if any residual connection
-        if (viewerController != null) {
-            viewerController.disconnect();
-        }
-        
-        hostSection.setVisible(true);
-        hostSection.setManaged(true);
-        viewerSection.setVisible(false);
-        viewerSection.setManaged(false);
-
-        currentRole = ClientRole.HOST;
-        updateHostStatus("ℹ️ Ready to connect as Host", "#2196F3");
-        System.out.println("🔴 Switched to HOST mode");
-    }
-
-    private void switchToViewer() {
-        // Check if currently active as host - must disconnect first
-        if (currentRole == ClientRole.HOST && roleActive) {
-            System.out.println("⚠️ Cannot switch to Viewer while connected as Host");
-            // Show warning and revert selection
-            Platform.runLater(() -> {
-                hostRadio.setSelected(true);
-                updateViewerStatus("⚠️ Stop streaming and disconnect first!", "#f44336");
-            });
-            return;
-        }
-        
-        // Disconnect host if any residual connection
-        if (hostController != null) {
-            hostController.disconnect();
-        }
-        
-        hostSection.setVisible(false);
-        hostSection.setManaged(false);
-        viewerSection.setVisible(true);
-        viewerSection.setManaged(true);
-
-        currentRole = ClientRole.VIEWER;
-        updateViewerStatus("ℹ️ Ready to connect as Viewer", "#2196F3");
-        System.out.println("🔵 Switched to VIEWER mode");
-    }
-
-    private void connectAsHost() {
-        System.out.println("=================================================");
-        System.out.println("🔌 connectAsHost() called - START");
-        System.out.println("=================================================");
-        
-        String server = hostServerInput.getText().trim();
-        String port = hostPortInput.getText().trim();
-        
-        System.out.println("📍 Server input: '" + server + "'");
-        System.out.println("📍 Port input: '" + port + "'");
-
-        if (server.isEmpty() || port.isEmpty()) {
-            System.out.println("⚠️ Validation failed - server or port is empty");
-            hostConnectionStatusLabel.setText("⚠️ Enter server address and port");
-            hostConnectionStatusLabel.setStyle("-fx-text-fill: #ff9800; -fx-font-weight: bold;");
-            return;
-        }
-
-        try {
-            int portNum = Integer.parseInt(port);
-            System.out.println("✅ Port parsed successfully: " + portNum);
-            System.out.println("🔄 Updating UI to 'Connecting...'");
-            
-            hostConnectionStatusLabel.setText("⏳ Connecting...");
-            hostConnectionStatusLabel.setStyle("-fx-text-fill: #2196f3; -fx-font-weight: bold;");
-            hostConnectButton.setDisable(true);
-
-            System.out.println("📞 Calling hostController.connect(" + server + ", " + portNum + ")");
-            hostController.connect(server, portNum);
-            System.out.println("✅ hostController.connect() called successfully");
-        } catch (NumberFormatException ex) {
-            System.err.println("❌ Port parsing failed: " + ex.getMessage());
-            hostConnectionStatusLabel.setText("⚠️ Invalid port number");
-            hostConnectionStatusLabel.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
-            hostConnectButton.setDisable(false);
-        }
-        
-        System.out.println("=================================================");
-        System.out.println("🔌 connectAsHost() called - END");
-        System.out.println("=================================================");
-    }
-
-    private void connectAsViewer() {
-        String server = viewerServerInput.getText().trim();
-        String port = viewerPortInput.getText().trim();
-
-        if (server.isEmpty() || port.isEmpty()) {
-            updateViewerStatus("⚠️ Enter server address and port", "#f44336");
-            return;
-        }
-
-        try {
-            int portNum = Integer.parseInt(port);
-            viewerController.connect(server, portNum);
-            viewerConnectButton.setDisable(true);
-            updateViewerStatus("🔗 Connecting...", "#2196F3");
-        } catch (NumberFormatException ex) {
-            updateViewerStatus("⚠️ Invalid port number", "#f44336");
-        }
-    }
-
-    // Update methods for Host
-    private void updateHostStatus(String message, String color) {
-        Platform.runLater(() -> {
-            hostStatusLabel.setText(message);
-            hostStatusLabel.setStyle("-fx-text-fill: " + color + ";");
-        });
-    }
-
-    private void updateHostPerformance(String message) {
-        Platform.runLater(() -> hostPerformanceLabel.setText(message));
-    }
-
-    private void updateViewerCount(int count) {
-        Platform.runLater(() -> viewerCountLabel.setText(String.valueOf(count)));
-    }
-
-    // Update methods for Viewer
-    private void updateViewerStatus(String message, String color) {
-        Platform.runLater(() -> {
-            viewerStatusLabel.setText(message);
-            viewerStatusLabel.setStyle("-fx-text-fill: " + color + ";");
-        });
-    }
-
-    private void updateViewerFps(String fps) {
-        Platform.runLater(() -> viewerFpsLabel.setText(fps));
-    }
-
-    private void updateViewerData(String data) {
-        Platform.runLater(() -> viewerDataLabel.setText(data));
-    }
-
-    private void updateVideoDisplay(String message) {
-        Platform.runLater(() -> videoDisplayLabel.setText(message));
-    }
-
-    // Connection status update
-    private void updateConnectionStatus(boolean connected, String role) {
-        Platform.runLater(() -> {
-            if (role.equals("host")) {
-                roleActive = connected;
-                // Disable viewer radio when connected as host
-                viewerRadio.setDisable(connected);
-                
-                if (connected) {
-                    hostConnectButton.setDisable(true);
-                    startButton.setDisable(false);
-                    hostConnectionStatusLabel.setText("✅ Connected");
-                    hostConnectionStatusLabel.setStyle("-fx-text-fill: #4CAF50; -fx-font-weight: bold;");
-                    // Show success toast
-                    showToast("Connected to server as Host!", "success");
-                } else {
-                    hostConnectButton.setDisable(false);
-                    startButton.setDisable(true);
-                    stopButton.setDisable(true);
-                    hostConnectionStatusLabel.setText("🔴 Disconnected");
-                    hostConnectionStatusLabel.setStyle("-fx-text-fill: #f44336; -fx-font-weight: bold;");
-                    currentRole = ClientRole.NONE;
-                    showToast("Disconnected from server", "warning");
-                }
-            } else if (role.equals("viewer")) {
-                roleActive = connected;
-                // Disable host radio when connected as viewer
-                hostRadio.setDisable(connected);
-                
-                if (connected) {
-                    viewerConnectButton.setDisable(true);
-                    joinRoomButton.setDisable(false);
-                    connectionStatusLabel.setText("✅ Connected");
-                    connectionStatusLabel.setStyle("-fx-text-fill: #4CAF50;");
-                    // Show success toast
-                    showToast("Connected to server as Viewer!", "success");
-                } else {
-                    viewerConnectButton.setDisable(false);
-                    joinRoomButton.setDisable(true);
-                    connectionStatusLabel.setText("❌ Disconnected");
-                    connectionStatusLabel.setStyle("-fx-text-fill: #f44336;");
-                    currentRole = ClientRole.NONE;
-                    showToast("Disconnected from server", "warning");
-                }
-            }
-        });
-    }
-
-    public void enableStartButton(boolean enable) {
-        Platform.runLater(() -> startButton.setDisable(!enable));
-    }
-
-    public void enableStopButton(boolean enable) {
-        Platform.runLater(() -> stopButton.setDisable(!enable));
-    }
-    
     /**
-     * Called when streaming starts or stops
-     * @param isStreaming true when streaming starts, false when it stops
+     * Auto-connect to the server using host/port from EnvConfig (.env file).
      */
-    private void onStreamingStateChanged(Boolean isStreaming) {
+    private void autoConnect() {
+        EnvConfig config = EnvConfig.getInstance();
+        String host = config.getServerHost();
+        int port = config.getServerPort();
+
+        System.out.println("🔌 Auto-connecting to " + host + ":" + port + "...");
+        connectionStatusLabel.setText("⏳ Connecting to " + host + ":" + port + "...");
+        connectionStatusLabel.setStyle("-fx-font-weight: 800; -fx-text-fill: #1570ef; -fx-font-size: 12;");
+
+        controller.connect(host, port);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  LEFT PANEL — AUTH HANDLERS
+    // ═══════════════════════════════════════════════════════════
+
+    @FXML
+    private void handleSignIn() {
+        showLoginDialog();
+    }
+
+    @FXML
+    private void handleGoogleSignUp() {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Google Sign-In");
+        alert.setHeaderText("Coming Soon");
+        alert.setContentText("Google OAuth sign-in will be available in a future update.");
+        alert.showAndWait();
+    }
+
+    @FXML
+    private void handleCreateAccount() {
+        showLoginDialog();
+    }
+
+    @FXML
+    private void handleSignOut() {
+        controller.getAuthService().logout();
+        controller.setAuthenticated(false);
+        showAuthButtons();
+        updateSecurityStatus(false, "Signed out");
+        setDisconnectedState();
+        autoConnect();
+    }
+
+    private void showLoginDialog() {
+        // Prevent duplicate dialogs from concurrent auth-required callbacks
+        if (loginDialogShowing) {
+            System.out.println("⚠️ Login dialog already showing, ignoring duplicate request");
+            return;
+        }
+        loginDialogShowing = true;
+
+        Stage owner = (Stage) connectionStatusLabel.getScene().getWindow();
+        LoginDialog loginDialog = new LoginDialog(controller.getAuthService(), owner);
+        loginDialog.showAndWait().ifPresent(result -> {
+            if (result instanceof AuthResult authResult) {
+                if (authResult.success()) {
+                    controller.setAuthenticated(true);
+                    String user = controller.getAuthService().getCurrentUsername().orElse("User");
+                    updateSecurityStatus(true, "Authenticated as " + user);
+                    showUserProfile(user);
+                    // Re-connect if not already connected
+                    autoConnect();
+                } else if (!"Cancelled".equals(authResult.message())) {
+                    updateSecurityStatus(false, "Authentication failed");
+                }
+            }
+        });
+
+        loginDialogShowing = false;
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  HOST HANDLERS
+    // ═══════════════════════════════════════════════════════════
+
+    @FXML
+    private void handleStartHosting() {
+        String roomId = roomIdInput.getText().trim();
+        controller.startHosting(roomId.isEmpty() ? null : roomId);
+    }
+
+    @FXML
+    private void handleStopHosting() {
+        controller.stopHosting();
+    }
+
+    @FXML
+    private void handleCopyRoomId() {
+        String roomId = activeRoomLabel.getText();
+        if (roomId != null && !roomId.equals("-")) {
+            copyToClipboard(roomId);
+            connectionStatusLabel.setText("📋 Room ID copied!");
+        }
+    }
+
+    @FXML
+    private void handleCopyAccessCode() {
+        String code = accessCodeLabel.getText();
+        if (code != null && !code.isEmpty()) {
+            copyToClipboard(code);
+            connectionStatusLabel.setText("📋 Access code copied!");
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  VIEWER HANDLERS
+    // ═══════════════════════════════════════════════════════════
+
+    @FXML
+    private void handleStartViewing() {
+        String roomId = joinRoomIdInput.getText().trim();
+        if (roomId.isEmpty()) {
+            viewerStatusLabel.setText("⚠️ Enter a room ID");
+            viewerStatusLabel.setStyle("-fx-font-weight: 900; -fx-text-fill: #ff9800;");
+            return;
+        }
+        controller.startViewing(roomId);
+    }
+
+    @FXML
+    private void handleStopViewing() {
+        controller.stopViewing();
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  CALLBACKS FROM DualModeController
+    // ═══════════════════════════════════════════════════════════
+
+    private void onStatusUpdate(String status) {
+        Platform.runLater(() -> connectionStatusLabel.setText(status));
+    }
+
+    private void onConnectionStatusChanged(Boolean connected) {
         Platform.runLater(() -> {
-            System.out.println("🎬 Streaming state changed: " + isStreaming);
-            if (isStreaming) {
-                // Streaming started - enable stop, disable start
-                stopButton.setDisable(false);
-                startButton.setDisable(true);
-                hostConnectButton.setDisable(true);  // Can't disconnect while streaming
+            if (connected) {
+                setConnectedState();
             } else {
-                // Streaming stopped - disable stop, enable start
-                stopButton.setDisable(true);
-                startButton.setDisable(false);
-                hostConnectButton.setDisable(false);  // Can disconnect now
+                setDisconnectedState();
             }
         });
     }
-    
-    /**
-     * Show a toast notification message
-     * @param message The message to display
-     * @param type "success", "error", "info", or "warning"
-     */
-    public void showToast(String message, String type) {
+
+    private void onHostPerformanceUpdate(String performance) {
         Platform.runLater(() -> {
-            try {
-                // Get the scene from any existing node
-                Scene scene = hostSection != null ? hostSection.getScene() : 
-                              (viewerSection != null ? viewerSection.getScene() : null);
-                
-                if (scene == null || scene.getRoot() == null) {
-                    System.out.println("🔔 TOAST [" + type + "]: " + message);
-                    return;
-                }
-                
-                // Create toast label
-                Label toastLabel = new Label(message);
-                toastLabel.setWrapText(true);
-                toastLabel.setMaxWidth(400);
-                
-                // Style based on type
-                String bgColor, textColor, emoji;
-                switch (type.toLowerCase()) {
-                    case "success":
-                        bgColor = "#4CAF50";
-                        textColor = "white";
-                        emoji = "✅ ";
-                        break;
-                    case "error":
-                        bgColor = "#f44336";
-                        textColor = "white";
-                        emoji = "❌ ";
-                        break;
-                    case "warning":
-                        bgColor = "#ff9800";
-                        textColor = "white";
-                        emoji = "⚠️ ";
-                        break;
-                    default:  // info
-                        bgColor = "#2196F3";
-                        textColor = "white";
-                        emoji = "ℹ️ ";
-                        break;
-                }
-                
-                toastLabel.setText(emoji + message);
-                toastLabel.setStyle(
-                    "-fx-background-color: " + bgColor + ";" +
-                    "-fx-text-fill: " + textColor + ";" +
-                    "-fx-padding: 15 25 15 25;" +
-                    "-fx-background-radius: 8;" +
-                    "-fx-font-size: 14px;" +
-                    "-fx-font-weight: bold;" +
-                    "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.3), 10, 0, 0, 3);"
-                );
-                
-                // Create container for positioning
-                StackPane toastContainer = new StackPane(toastLabel);
-                toastContainer.setAlignment(Pos.BOTTOM_CENTER);
-                toastContainer.setPickOnBounds(false);
-                toastContainer.setMouseTransparent(true);
-                
-                // Add to scene
-                if (scene.getRoot() instanceof StackPane) {
-                    ((StackPane) scene.getRoot()).getChildren().add(toastContainer);
-                } else if (scene.getRoot() instanceof javafx.scene.layout.Pane) {
-                    ((javafx.scene.layout.Pane) scene.getRoot()).getChildren().add(toastContainer);
-                } else {
-                    // Just log if we can't add to scene
-                    System.out.println("🔔 TOAST [" + type + "]: " + message);
-                    return;
-                }
-                
-                // Position at bottom
-                toastLabel.setTranslateY(50);
-                toastLabel.setOpacity(0);
-                
-                // Animate in
-                FadeTransition fadeIn = new FadeTransition(Duration.millis(300), toastLabel);
-                fadeIn.setFromValue(0);
-                fadeIn.setToValue(1);
-                
-                TranslateTransition slideIn = new TranslateTransition(Duration.millis(300), toastLabel);
-                slideIn.setFromY(50);
-                slideIn.setToY(-30);
-                
-                ParallelTransition showAnimation = new ParallelTransition(fadeIn, slideIn);
-                
-                // Animate out after delay
-                FadeTransition fadeOut = new FadeTransition(Duration.millis(300), toastLabel);
-                fadeOut.setFromValue(1);
-                fadeOut.setToValue(0);
-                fadeOut.setDelay(Duration.seconds(3));
-                
-                fadeOut.setOnFinished(e -> {
-                    if (scene.getRoot() instanceof javafx.scene.layout.Pane) {
-                        ((javafx.scene.layout.Pane) scene.getRoot()).getChildren().remove(toastContainer);
-                    }
-                });
-                
-                showAnimation.play();
-                fadeOut.play();
-                
-                System.out.println("🔔 TOAST [" + type + "]: " + message);
-                
-            } catch (Exception e) {
-                System.out.println("🔔 TOAST [" + type + "]: " + message);
+            if (hostFpsLabel != null) {
+                hostFpsLabel.setText(performance);
             }
         });
+    }
+
+    private void onViewerCountUpdate(Integer count) {
+        Platform.runLater(() -> {
+            if (viewerCountLabel != null) {
+                viewerCountLabel.setText("👁 " + count + " viewer" + (count != 1 ? "s" : ""));
+            }
+        });
+    }
+
+    private void onHostingStateChanged(Boolean isHosting) {
+        Platform.runLater(() -> {
+            startButton.setDisable(isHosting);
+            stopButton.setDisable(!isHosting);
+            roomIdInput.setDisable(isHosting);
+
+            if (isHosting) {
+                hostConnectionStatusLabel.setText("🟢 Hosting");
+                hostConnectionStatusLabel.setStyle("-fx-text-fill: #12b76a; -fx-font-weight: 800;");
+            } else {
+                hostConnectionStatusLabel.setText("⚫ Not Hosting");
+                hostConnectionStatusLabel.setStyle("-fx-text-fill: #667085; -fx-font-weight: 800;");
+
+                // Hide room info
+                roomInfoSection.setVisible(false);
+                roomInfoSection.setManaged(false);
+                accessCodeRow.setVisible(false);
+                accessCodeRow.setManaged(false);
+                accessCodeLabel.setText("");
+                activeRoomLabel.setText("-");
+                if (hostFpsLabel != null) hostFpsLabel.setText("");
+            }
+        });
+    }
+
+    private void onRoomCreated(String roomId) {
+        Platform.runLater(() -> {
+            activeRoomLabel.setText(roomId);
+            roomInfoSection.setVisible(true);
+            roomInfoSection.setManaged(true);
+        });
+    }
+
+    private void onAccessCodeReceived(String accessCode) {
+        Platform.runLater(() -> {
+            if (accessCode != null && !accessCode.isEmpty()) {
+                accessCodeLabel.setText(accessCode);
+                accessCodeRow.setVisible(true);
+                accessCodeRow.setManaged(true);
+            } else {
+                accessCodeRow.setVisible(false);
+                accessCodeRow.setManaged(false);
+                accessCodeLabel.setText("");
+            }
+        });
+    }
+
+    private void onFrameReceived(Image frame) {
+        Platform.runLater(() -> {
+            videoImageView.setImage(frame);
+            if (videoPlaceholder != null) {
+                videoPlaceholder.setVisible(false);
+            }
+            // Update fullscreen viewer video
+            viewerFullscreenVideo.setImage(frame);
+            if (viewerFullscreenPlaceholder != null) {
+                viewerFullscreenPlaceholder.setVisible(false);
+            }
+        });
+    }
+
+    private void onViewerPerformanceUpdate(String performance) {
+        Platform.runLater(() -> {
+            // Parse performance string and update individual labels
+            // Format from DualModeController: "📥 FPS: X | Data: Y MB"
+            if (performance.contains("FPS:")) {
+                try {
+                    String[] parts = performance.split("\\|");
+                    for (String part : parts) {
+                        String trimmed = part.trim();
+                        if (trimmed.contains("FPS:")) {
+                            String fps = trimmed.replaceAll("[^0-9.]", "").trim();
+                            viewerFpsLabel.setText(fps + " FPS");
+                            fsFpsLabel.setText(fps);
+                        } else if (trimmed.contains("Data:") || trimmed.contains("MB")) {
+                            String data = trimmed.replaceAll("[^0-9.]", "").trim();
+                            viewerDataLabel.setText(data + " MB");
+                            fsDataLabel.setText(data + " MB");
+                        }
+                    }
+                } catch (Exception e) {
+                    viewerFpsLabel.setText(performance);
+                    fsFpsLabel.setText(performance);
+                }
+            } else {
+                viewerFpsLabel.setText(performance);
+                fsFpsLabel.setText(performance);
+            }
+        });
+    }
+
+    private void onViewingStateChanged(Boolean isViewing) {
+        Platform.runLater(() -> {
+            joinRoomButton.setDisable(isViewing);
+            joinRoomIdInput.setDisable(isViewing);
+            disconnectViewerButton.setDisable(!isViewing);
+
+            if (isViewing) {
+                String roomCode = joinRoomIdInput.getText().trim();
+                viewerStatusLabel.setText("🟢 Viewing");
+                viewerStatusLabel.setStyle("-fx-font-weight: 900; -fx-text-fill: #12b76a;");
+                roomStatusLabel.setText(roomCode);
+
+                // ── Switch to viewer fullscreen screen ──
+                homeScreen.setVisible(false);
+                homeScreen.setManaged(false);
+                viewerScreen.setVisible(true);
+                viewerScreen.setManaged(true);
+
+                // Set room labels on fullscreen view
+                viewerRoomCodeLabel.setText("Room: " + roomCode);
+                fsRoomLabel.setText(roomCode);
+            } else {
+                viewerStatusLabel.setText("🟡 Waiting");
+                viewerStatusLabel.setStyle("-fx-font-weight: 900; -fx-text-fill: #ff9800;");
+
+                // ── Switch back to home screen ──
+                viewerScreen.setVisible(false);
+                viewerScreen.setManaged(false);
+                homeScreen.setVisible(true);
+                homeScreen.setManaged(true);
+
+                // Reset home screen viewer state
+                if (videoPlaceholder != null) videoPlaceholder.setVisible(true);
+                videoImageView.setImage(null);
+                roomStatusLabel.setText("None");
+                viewerFpsLabel.setText("0 FPS");
+                viewerDataLabel.setText("0 MB");
+                latencyLabel.setText("0 ms");
+                qualityLabel.setText("N/A");
+                viewerStreamPane.setVisible(false);
+                viewerStreamPane.setManaged(false);
+
+                // Reset fullscreen viewer state
+                viewerFullscreenVideo.setImage(null);
+                if (viewerFullscreenPlaceholder != null) viewerFullscreenPlaceholder.setVisible(true);
+                viewerRoomCodeLabel.setText("Room: ---");
+                fsRoomLabel.setText("---");
+                fsFpsLabel.setText("0");
+                fsDataLabel.setText("0 MB");
+                fsLatencyLabel.setText("0 ms");
+                fsQualityLabel.setText("N/A");
+            }
+        });
+    }
+
+    // ── Authentication callbacks ──
+
+    private void onAuthenticationRequired(String message) {
+        Platform.runLater(() -> {
+            updateSecurityStatus(false, message);
+            showLoginDialog();
+        });
+    }
+
+    private void onAuthenticationSuccess(String username) {
+        Platform.runLater(() -> {
+            updateSecurityStatus(true, "Logged in as " + username);
+            showUserProfile(username);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  LEFT PANEL — AUTH / PROFILE TOGGLE
+    // ═══════════════════════════════════════════════════════════
+
+    private void showUserProfile(String username) {
+        // Set avatar initial
+        String initial = (username != null && !username.isEmpty())
+                ? username.substring(0, 1).toUpperCase() : "U";
+        userAvatarLabel.setText(initial);
+        userDisplayName.setText(username);
+        userRoleLabel.setText("Authenticated");
+        sessionStatusLabel.setText("Session active");
+
+        // Hide auth buttons, show profile
+        authButtonsSection.setVisible(false);
+        authButtonsSection.setManaged(false);
+        userProfileSection.setVisible(true);
+        userProfileSection.setManaged(true);
+    }
+
+    private void showAuthButtons() {
+        // Show auth buttons, hide profile
+        authButtonsSection.setVisible(true);
+        authButtonsSection.setManaged(true);
+        userProfileSection.setVisible(false);
+        userProfileSection.setManaged(false);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  UI STATE MANAGEMENT
+    // ═══════════════════════════════════════════════════════════
+
+    private void setConnectedState() {
+        connectionStatusLabel.setText("✅ Connected");
+        connectionStatusLabel.setStyle("-fx-font-weight: 800; -fx-text-fill: #12b76a; -fx-font-size: 12;");
+
+        // Enable host/viewer controls
+        startButton.setDisable(false);
+        roomIdInput.setDisable(false);
+
+        // Show viewer connected pane (join controls)
+        viewerConnectedPane.setVisible(true);
+        viewerConnectedPane.setManaged(true);
+        joinRoomButton.setDisable(false);
+        joinRoomIdInput.setDisable(false);
+        disconnectViewerButton.setDisable(true);
+
+        hostConnectionStatusLabel.setText("⚫ Not Hosting");
+        hostConnectionStatusLabel.setStyle("-fx-text-fill: #667085; -fx-font-weight: 800;");
+
+        updateSecurityStatus(true, "Connected securely");
+    }
+
+    private void setDisconnectedState() {
+        connectionStatusLabel.setText("❌ Not Connected");
+        connectionStatusLabel.setStyle("-fx-font-weight: 800; -fx-text-fill: #d92d20; -fx-font-size: 12;");
+
+        // Disable all host/viewer controls
+        startButton.setDisable(true);
+        stopButton.setDisable(true);
+        roomIdInput.setDisable(true);
+
+        // Hide viewer connected pane
+        viewerConnectedPane.setVisible(false);
+        viewerConnectedPane.setManaged(false);
+
+        // Reset host info
+        hostConnectionStatusLabel.setText("🔴 Disconnected");
+        hostConnectionStatusLabel.setStyle("-fx-text-fill: #d92d20; -fx-font-weight: 800;");
+        roomInfoSection.setVisible(false);
+        roomInfoSection.setManaged(false);
+
+        // Reset viewer
+        viewerStatusLabel.setText("🟡 Waiting");
+        viewerStatusLabel.setStyle("-fx-font-weight: 900;");
+        if (videoPlaceholder != null) videoPlaceholder.setVisible(true);
+        videoImageView.setImage(null);
+    }
+
+    private void updateSecurityStatus(boolean secure, String message) {
+        Platform.runLater(() -> {
+            if (secure) {
+                securityStatusDot.setText("●");
+                securityStatusDot.setStyle("-fx-text-fill: #39d98a; -fx-font-size: 14;");
+            } else {
+                securityStatusDot.setText("●");
+                securityStatusDot.setStyle("-fx-text-fill: #ff9800; -fx-font-size: 14;");
+            }
+            securityStatusLabel.setText(message);
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  UTILITIES
+    // ═══════════════════════════════════════════════════════════
+
+    private void copyToClipboard(String text) {
+        Clipboard clipboard = Clipboard.getSystemClipboard();
+        ClipboardContent content = new ClipboardContent();
+        content.putString(text);
+        clipboard.setContent(content);
     }
 }
