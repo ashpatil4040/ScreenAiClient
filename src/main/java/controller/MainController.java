@@ -14,6 +14,7 @@ import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
+import java.security.SecureRandom;
 import java.util.UUID;
 
 /**
@@ -24,79 +25,139 @@ import java.util.UUID;
 public class MainController {
 
     // ── Left Panel ──
-    @FXML private VBox authButtonsSection;
-    @FXML private Button signInButton;
-    @FXML private Button googleSignUpButton;
-    @FXML private Hyperlink createAccountLink;
-    @FXML private VBox userProfileSection;
-    @FXML private Label userAvatarLabel;
-    @FXML private Label userDisplayName;
-    @FXML private Label userRoleLabel;
-    @FXML private Label sessionStatusLabel;
-    @FXML private Button signOutButton;
-    @FXML private Label securityStatusDot;
-    @FXML private Label securityStatusLabel;
+    @FXML
+    private VBox authButtonsSection;
+    @FXML
+    private Button signInButton;
+    @FXML
+    private Hyperlink createAccountLink;
+    @FXML
+    private VBox userProfileSection;
+    @FXML
+    private Label userAvatarLabel;
+    @FXML
+    private Label userDisplayName;
+    @FXML
+    private Label userRoleLabel;
+    @FXML
+    private Label sessionStatusLabel;
+    @FXML
+    private Button signOutButton;
+    @FXML
+    private Label securityStatusDot;
+    @FXML
+    private Label securityStatusLabel;
 
     // ── Connection status (auto-connect) ──
-    @FXML private Label connectionStatusLabel;
+    @FXML
+    private Label connectionStatusLabel;
 
     // ── Host Section ──
-    @FXML private VBox hostSection;
-    @FXML private Label hostConnectionStatusLabel;
-    @FXML private TextField roomIdInput;
-    @FXML private Button startButton;
-    @FXML private Button stopButton;
+    @FXML
+    private VBox hostSection;
+    @FXML
+    private Label hostConnectionStatusLabel;
+    @FXML
+    private Label roomIdInput;
+    @FXML
+    private Label sessionPasswordLabel;
+    @FXML
+    private Button copyRoomIdButton;
+    @FXML
+    private Button refreshPasswordButton;
+    @FXML
+    private Button copyPasswordButton;
+    @FXML
+    private Button startButton;
+    @FXML
+    private Button stopButton;
 
     // ── Host Room Info (hidden until room created) ──
-    @FXML private VBox roomInfoSection;
-    @FXML private Label activeRoomLabel;
-    @FXML private Button copyRoomIdButton;
-    @FXML private Label viewerCountLabel;
-    @FXML private HBox accessCodeRow;
-    @FXML private Label accessCodeLabel;
-    @FXML private Button copyAccessCodeButton;
-    @FXML private Label hostFpsLabel;
+    @FXML
+    private VBox roomInfoSection;
+    @FXML
+    private Label activeRoomLabel;
+    @FXML
+    private Label viewerCountLabel;
+    @FXML
+    private HBox accessCodeRow;
+    @FXML
+    private Label accessCodeLabel;
+    @FXML
+    private Button copyAccessCodeButton;
+    @FXML
+    private Label hostFpsLabel;
 
     // ── Viewer Section ──
-    @FXML private VBox viewerSection;
-    @FXML private Label viewerStatusLabel;
-    @FXML private VBox viewerConnectedPane;
-    @FXML private VBox viewerStreamPane;
-    @FXML private TextField joinRoomIdInput;
-    @FXML private Button joinRoomButton;
-    @FXML private ImageView videoImageView;
-    @FXML private VBox videoPlaceholder;
-    @FXML private Label videoDisplayLabel;
-    @FXML private Label roomStatusLabel;
-    @FXML private Label viewerFpsLabel;
-    @FXML private Label viewerDataLabel;
-    @FXML private Label latencyLabel;
-    @FXML private Label qualityLabel;
-    @FXML private Button disconnectViewerButton;
+    @FXML
+    private VBox viewerSection;
+    @FXML
+    private Label viewerStatusLabel;
+    @FXML
+    private VBox viewerConnectedPane;
+    @FXML
+    private VBox viewerStreamPane;
+    @FXML
+    private TextField joinRoomIdInput;
+    @FXML
+    private Button joinRoomButton;
+    @FXML
+    private ImageView videoImageView;
+    @FXML
+    private VBox videoPlaceholder;
+    @FXML
+    private Label videoDisplayLabel;
+    @FXML
+    private Label roomStatusLabel;
+    @FXML
+    private Label viewerFpsLabel;
+    @FXML
+    private Label viewerDataLabel;
+    @FXML
+    private Label latencyLabel;
+    @FXML
+    private Label qualityLabel;
+    @FXML
+    private Button disconnectViewerButton;
 
     // ── Viewer Fullscreen Screen ──
-    @FXML private ScrollPane homeScreen;
-    @FXML private VBox viewerScreen;
-    @FXML private StackPane viewerVideoContainer;
-    @FXML private ImageView viewerFullscreenVideo;
-    @FXML private VBox viewerFullscreenPlaceholder;
-    @FXML private Label viewerRoomCodeLabel;
-    @FXML private Button viewerBackButton;
-    @FXML private Label fsRoomLabel;
-    @FXML private Label fsFpsLabel;
-    @FXML private Label fsDataLabel;
-    @FXML private Label fsLatencyLabel;
-    @FXML private Label fsQualityLabel;
+    @FXML
+    private ScrollPane homeScreen;
+    @FXML
+    private VBox viewerScreen;
+    @FXML
+    private StackPane viewerVideoContainer;
+    @FXML
+    private ImageView viewerFullscreenVideo;
+    @FXML
+    private VBox viewerFullscreenPlaceholder;
+    @FXML
+    private Label viewerRoomCodeLabel;
+    @FXML
+    private Button viewerBackButton;
+    @FXML
+    private Label fsRoomLabel;
+    @FXML
+    private Label fsFpsLabel;
+    @FXML
+    private Label fsDataLabel;
+    @FXML
+    private Label fsLatencyLabel;
+    @FXML
+    private Label fsQualityLabel;
 
     // ── Settings ──
-    @FXML private Button settingsButton;
+    @FXML
+    private Button settingsButton;
 
     // ── Backend ──
     private DualModeController controller;
     private volatile boolean loginDialogShowing = false;
+    private String generatedRoomId;
+    private String generatedPassword;
 
     // ═══════════════════════════════════════════════════════════
-    //  INITIALIZATION
+    // INITIALIZATION
     // ═══════════════════════════════════════════════════════════
 
     @FXML
@@ -116,15 +177,19 @@ public class MainController {
                 this::onViewerPerformanceUpdate,
                 this::onViewingStateChanged,
                 this::onAuthenticationRequired,
-                this::onAuthenticationSuccess
-        );
+                this::onAuthenticationSuccess);
         controller.setOnAccessCodeReceived(this::onAccessCodeReceived);
 
-        // ── Generate default room ID ──
-        roomIdInput.setText("room-" + UUID.randomUUID().toString().substring(0, 8));
+        // ── Generate default room ID and password ──
+        generatedRoomId = generateRoomId();
+        generatedPassword = generatePassword();
+        roomIdInput.setText(generatedRoomId);
+        sessionPasswordLabel.setText(generatedPassword);
 
-        // ── Set initial disabled state ──
+        // ── Set initial state ──
         setDisconnectedState();
+        stopButton.setVisible(false);
+        stopButton.setManaged(false);
 
         // ── Try auto-login from saved credentials ──
         controller.tryAutoLogin();
@@ -155,21 +220,12 @@ public class MainController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  LEFT PANEL — AUTH HANDLERS
+    // LEFT PANEL — AUTH HANDLERS
     // ═══════════════════════════════════════════════════════════
 
     @FXML
     private void handleSignIn() {
         showLoginDialog();
-    }
-
-    @FXML
-    private void handleGoogleSignUp() {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Google Sign-In");
-        alert.setHeaderText("Coming Soon");
-        alert.setContentText("Google OAuth sign-in will be available in a future update.");
-        alert.showAndWait();
     }
 
     @FXML
@@ -179,12 +235,10 @@ public class MainController {
 
     @FXML
     private void handleSignOut() {
-        controller.getAuthService().logout();
-        controller.setAuthenticated(false);
         showAuthButtons();
-        updateSecurityStatus(false, "Signed out");
-        setDisconnectedState();
-        autoConnect();
+        updateSecurityStatus(false, "Connected as guest");
+        // Logout + reconnect as guest (stays connected to server)
+        controller.logout();
     }
 
     private void showLoginDialog() {
@@ -204,8 +258,8 @@ public class MainController {
                     String user = controller.getAuthService().getCurrentUsername().orElse("User");
                     updateSecurityStatus(true, "Authenticated as " + user);
                     showUserProfile(user);
-                    // Re-connect if not already connected
-                    autoConnect();
+                    // Upgrade guest session to authenticated session
+                    controller.upgradeToAuthenticatedSession();
                 } else if (!"Cancelled".equals(authResult.message())) {
                     updateSecurityStatus(false, "Authentication failed");
                 }
@@ -216,13 +270,12 @@ public class MainController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  HOST HANDLERS
+    // HOST HANDLERS
     // ═══════════════════════════════════════════════════════════
 
     @FXML
     private void handleStartHosting() {
-        String roomId = roomIdInput.getText().trim();
-        controller.startHosting(roomId.isEmpty() ? null : roomId);
+        controller.startHosting(generatedRoomId);
     }
 
     @FXML
@@ -232,10 +285,31 @@ public class MainController {
 
     @FXML
     private void handleCopyRoomId() {
-        String roomId = activeRoomLabel.getText();
-        if (roomId != null && !roomId.equals("-")) {
-            copyToClipboard(roomId);
+        if (activeRoomLabel.getText() != null && !"-".equals(activeRoomLabel.getText())) {
+            copyToClipboard(activeRoomLabel.getText());
             connectionStatusLabel.setText("📋 Room ID copied!");
+        }
+    }
+
+    @FXML
+    private void handleCopyId() {
+        if (generatedRoomId != null) {
+            copyToClipboard(generatedRoomId);
+            connectionStatusLabel.setText("📋 ID copied!");
+        }
+    }
+
+    @FXML
+    private void handleRefreshPassword() {
+        generatedPassword = generatePassword();
+        sessionPasswordLabel.setText(generatedPassword);
+    }
+
+    @FXML
+    private void handleCopyPassword() {
+        if (generatedPassword != null) {
+            copyToClipboard(generatedPassword);
+            connectionStatusLabel.setText("📋 Password copied!");
         }
     }
 
@@ -249,7 +323,7 @@ public class MainController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  VIEWER HANDLERS
+    // VIEWER HANDLERS
     // ═══════════════════════════════════════════════════════════
 
     @FXML
@@ -269,7 +343,7 @@ public class MainController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  CALLBACKS FROM DualModeController
+    // CALLBACKS FROM DualModeController
     // ═══════════════════════════════════════════════════════════
 
     private void onStatusUpdate(String status) {
@@ -304,9 +378,10 @@ public class MainController {
 
     private void onHostingStateChanged(Boolean isHosting) {
         Platform.runLater(() -> {
-            startButton.setDisable(isHosting);
-            stopButton.setDisable(!isHosting);
-            roomIdInput.setDisable(isHosting);
+            startButton.setVisible(!isHosting);
+            startButton.setManaged(!isHosting);
+            stopButton.setVisible(isHosting);
+            stopButton.setManaged(isHosting);
 
             if (isHosting) {
                 hostConnectionStatusLabel.setText("🟢 Hosting");
@@ -322,7 +397,8 @@ public class MainController {
                 accessCodeRow.setManaged(false);
                 accessCodeLabel.setText("");
                 activeRoomLabel.setText("-");
-                if (hostFpsLabel != null) hostFpsLabel.setText("");
+                if (hostFpsLabel != null)
+                    hostFpsLabel.setText("");
             }
         });
     }
@@ -395,9 +471,6 @@ public class MainController {
 
     private void onViewingStateChanged(Boolean isViewing) {
         Platform.runLater(() -> {
-            joinRoomButton.setDisable(isViewing);
-            joinRoomIdInput.setDisable(isViewing);
-            disconnectViewerButton.setDisable(!isViewing);
 
             if (isViewing) {
                 String roomCode = joinRoomIdInput.getText().trim();
@@ -425,7 +498,8 @@ public class MainController {
                 homeScreen.setManaged(true);
 
                 // Reset home screen viewer state
-                if (videoPlaceholder != null) videoPlaceholder.setVisible(true);
+                if (videoPlaceholder != null)
+                    videoPlaceholder.setVisible(true);
                 videoImageView.setImage(null);
                 roomStatusLabel.setText("None");
                 viewerFpsLabel.setText("0 FPS");
@@ -437,7 +511,8 @@ public class MainController {
 
                 // Reset fullscreen viewer state
                 viewerFullscreenVideo.setImage(null);
-                if (viewerFullscreenPlaceholder != null) viewerFullscreenPlaceholder.setVisible(true);
+                if (viewerFullscreenPlaceholder != null)
+                    viewerFullscreenPlaceholder.setVisible(true);
                 viewerRoomCodeLabel.setText("Room: ---");
                 fsRoomLabel.setText("---");
                 fsFpsLabel.setText("0");
@@ -453,7 +528,7 @@ public class MainController {
     private void onAuthenticationRequired(String message) {
         Platform.runLater(() -> {
             updateSecurityStatus(false, message);
-            showLoginDialog();
+            showAuthButtons();
         });
     }
 
@@ -461,17 +536,20 @@ public class MainController {
         Platform.runLater(() -> {
             updateSecurityStatus(true, "Logged in as " + username);
             showUserProfile(username);
+            // Upgrade to authenticated session if connected as guest
+            controller.upgradeToAuthenticatedSession();
         });
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  LEFT PANEL — AUTH / PROFILE TOGGLE
+    // LEFT PANEL — AUTH / PROFILE TOGGLE
     // ═══════════════════════════════════════════════════════════
 
     private void showUserProfile(String username) {
         // Set avatar initial
         String initial = (username != null && !username.isEmpty())
-                ? username.substring(0, 1).toUpperCase() : "U";
+                ? username.substring(0, 1).toUpperCase()
+                : "U";
         userAvatarLabel.setText(initial);
         userDisplayName.setText(username);
         userRoleLabel.setText("Authenticated");
@@ -493,23 +571,12 @@ public class MainController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  UI STATE MANAGEMENT
+    // UI STATE MANAGEMENT
     // ═══════════════════════════════════════════════════════════
 
     private void setConnectedState() {
         connectionStatusLabel.setText("✅ Connected");
         connectionStatusLabel.setStyle("-fx-font-weight: 800; -fx-text-fill: #12b76a; -fx-font-size: 12;");
-
-        // Enable host/viewer controls
-        startButton.setDisable(false);
-        roomIdInput.setDisable(false);
-
-        // Show viewer connected pane (join controls)
-        viewerConnectedPane.setVisible(true);
-        viewerConnectedPane.setManaged(true);
-        joinRoomButton.setDisable(false);
-        joinRoomIdInput.setDisable(false);
-        disconnectViewerButton.setDisable(true);
 
         hostConnectionStatusLabel.setText("⚫ Not Hosting");
         hostConnectionStatusLabel.setStyle("-fx-text-fill: #667085; -fx-font-weight: 800;");
@@ -521,15 +588,6 @@ public class MainController {
         connectionStatusLabel.setText("❌ Not Connected");
         connectionStatusLabel.setStyle("-fx-font-weight: 800; -fx-text-fill: #d92d20; -fx-font-size: 12;");
 
-        // Disable all host/viewer controls
-        startButton.setDisable(true);
-        stopButton.setDisable(true);
-        roomIdInput.setDisable(true);
-
-        // Hide viewer connected pane
-        viewerConnectedPane.setVisible(false);
-        viewerConnectedPane.setManaged(false);
-
         // Reset host info
         hostConnectionStatusLabel.setText("🔴 Disconnected");
         hostConnectionStatusLabel.setStyle("-fx-text-fill: #d92d20; -fx-font-weight: 800;");
@@ -539,7 +597,8 @@ public class MainController {
         // Reset viewer
         viewerStatusLabel.setText("🟡 Waiting");
         viewerStatusLabel.setStyle("-fx-font-weight: 900;");
-        if (videoPlaceholder != null) videoPlaceholder.setVisible(true);
+        if (videoPlaceholder != null)
+            videoPlaceholder.setVisible(true);
         videoImageView.setImage(null);
     }
 
@@ -557,7 +616,7 @@ public class MainController {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  UTILITIES
+    // UTILITIES
     // ═══════════════════════════════════════════════════════════
 
     private void copyToClipboard(String text) {
@@ -565,5 +624,29 @@ public class MainController {
         ClipboardContent content = new ClipboardContent();
         content.putString(text);
         clipboard.setContent(content);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ID / PASSWORD GENERATION
+    // ═══════════════════════════════════════════════════════════
+
+    private String generateRoomId() {
+        // Generate a numeric ID like TeamViewer: "X XXX XXX XXX"
+        SecureRandom random = new SecureRandom();
+        long id = 1_000_000_000L + (long) (random.nextDouble() * 9_000_000_000L);
+        String digits = String.valueOf(id);
+        return digits.substring(0, 1) + " " + digits.substring(1, 4) + " " + digits.substring(4, 7) + " "
+                + digits.substring(7, 10);
+    }
+
+    private String generatePassword() {
+        // Generate a short alphanumeric password like TeamViewer
+        String chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+        SecureRandom random = new SecureRandom();
+        StringBuilder sb = new StringBuilder(8);
+        for (int i = 0; i < 8; i++) {
+            sb.append(chars.charAt(random.nextInt(chars.length())));
+        }
+        return sb.toString();
     }
 }
