@@ -1,6 +1,6 @@
 # ScreenAI Client — Secure Cross-Platform Screen Sharing
 
-> A **secure JavaFX desktop client** for real-time screen sharing with JWT authentication, room password protection, and hardware-accelerated encoding. **Supports macOS, Windows, and Linux.**
+> A **secure JavaFX desktop client** for real-time screen sharing with **TeamViewer-style guest access**, room password protection, and hardware-accelerated encoding. **No login required** — launch and start sharing instantly. Supports macOS, Windows, and Linux.
 
 > **For detailed security documentation, see the server's [SECURITY.md](../ScreenAi-security-server/docs/SECURITY.md)**
 
@@ -19,45 +19,53 @@
 
 ## Overview
 
-**ScreenAI Client** is a secure desktop application enabling real-time screen sharing with comprehensive authentication and bidirectional streaming support. It uses a **split-panel home screen** with host and viewer controls, and **auto-connects** to the server from `.env` configuration on launch. When a viewer joins a room, the entire UI transitions to a **dedicated fullscreen viewer screen** with live video and real-time stats.
+**ScreenAI Client** is a secure desktop application enabling real-time screen sharing with a **TeamViewer-style workflow**. It auto-connects to the server as a guest on launch — no registration or login required. Rooms are protected by auto-generated passwords shared out-of-band. The app uses a **split-panel home screen** with host and viewer controls, and a **dedicated fullscreen viewer screen** with live video and real-time stats.
 
 ### Host (Presenter)
-- JWT-based login required before streaming
-- Room password protection with auto-generated access codes
+- **No login required** — connect as guest and start hosting immediately
+- Room password auto-generated and displayed in UI
+- Access codes generated server-side for password-protected rooms
 - Viewer management — approve, kick, or ban viewers
 - H.264/MPEG-TS encoding using FFmpeg with hardware acceleration (VideoToolbox, NVENC, libx264)
 - ~28-30 FPS with ultrafast/zerolatency preset
 
 ### Viewer (Watcher)
-- Enter access code for password-protected rooms
-- Connect to host's room using Room ID
+- Enter Room ID + password/access code to join
+- Password dialog appears automatically when room requires authentication
 - **Fullscreen viewer screen** replaces the home screen on join — dark themed with top bar, live video, and bottom stats bar
-- H.264 decoding via FFmpegFrameGrabber with batch processing (~12-15 FPS)
+- H.264 decoding via FFmpegFrameGrabber with batch processing
 - One-click disconnect returns to home screen
 
 ### Split-Panel Home Screen
 - Host and viewer controls visible simultaneously (no tabs to switch)
-- Left panel: Blue gradient brand panel with sign-in buttons (before login) or **user profile with avatar, username, role, session status, and Sign Out** (after login)
-- Right panel: White card with host section, viewer section, and room info
+- Left panel: Blue gradient brand panel with optional sign-in buttons or **user profile with avatar, username, role, session status, and Sign Out** (after login)
+- Right panel: White card with host section (Room ID + Password + Start), viewer section (Room ID + Join), and room info
 - Auto-connects from `.env` — no manual server input needed
 
 ---
 
 ## Security Features
 
-### Authentication
-- **JWT Token Auth** — Login/register via secure dialog before any server interaction
+### Guest Access (Default)
+- **No login required** — app connects as a guest automatically on launch
+- Server assigns a guest session ID (e.g., `guest_6d618b43`)
+- Guests can create and join password-protected rooms
+- Optional Sign In / Create Account for persistent identity
+
+### Room Security
+- **Password Protection** — Every room gets an auto-generated password displayed in the UI
+- **Access Codes** — 8-char alphanumeric codes for password-protected rooms (24-hour expiry)
+- **Password Dialog** — Automatically prompted when joining a protected room (ROOM_003)
+- **Viewer Approval** — Optional manual approve/deny workflow for incoming viewers
+- **Kick/Ban** — Remove or permanently block unwanted viewers
+
+### Authentication (Optional)
+- **JWT Token Auth** — Login/register via secure dialog for persistent identity
 - **Access + Refresh Tokens** — 15 min access tokens with automatic refresh scheduled 1 min before expiry
-- **Token Refresh Retry** — 3 retries with exponential backoff (5s → 10s → 20s) on transient failures. Tokens only cleared on HTTP 401/403 (not on timeouts or 500s)
+- **Token Refresh Retry** — 3 retries with exponential backoff (5s → 10s → 20s) on transient failures
 - **Encrypted Storage** — AES-256-GCM encryption with PBKDF2-HMAC-SHA256 key derivation, stored at `~/.screenai/credentials.enc`
 - **Auto-Login** — Persisted refresh token used for automatic authentication on launch
 - **Token Rotation** — New refresh token issued on every refresh; old one invalidated
-
-### Room Security
-- **Password Protection** — Create rooms with optional password (SHA-256 + salt on server)
-- **Access Codes** — 8-char alphanumeric codes for password-protected rooms (24-hour expiry)
-- **Viewer Approval** — Manual approve/deny workflow for incoming viewers
-- **Kick/Ban** — Remove or permanently block unwanted viewers
 
 ### Login Dialog
 - White card design with blue gradient header
@@ -104,10 +112,10 @@ mvn org.openjfx:javafx-maven-plugin:0.0.8:run
 
 ### 3. First Launch
 
-1. App auto-connects to `SERVER_HOST:SERVER_PORT`
-2. Login dialog appears — create an account or sign in
-3. After login, left panel shows your **user profile** (avatar, name, role, session status)
-4. Start hosting or viewing immediately — both sections are visible
+1. App auto-connects to `SERVER_HOST:SERVER_PORT` as a guest
+2. Room ID and password are auto-generated — ready to host immediately
+3. Optionally sign in for persistent identity (left panel)
+4. Start hosting or viewing — both sections are visible
 5. As a viewer, joining a room transitions to a fullscreen viewer screen
 
 ---
@@ -126,26 +134,22 @@ mvn org.openjfx:javafx-maven-plugin:0.0.8:run
 ### As a Host
 
 ```
-1. Launch app → auto-connects to server
-2. Login dialog appears → Sign Up (first time) or Login
-3. Enter custom Room ID (optional)
-4. Click [Start Sharing]
-5. If room is password-protected:
-   - Access code appears in room info section
-   - Click [Copy] to share with viewers
-6. Share Room ID + Access Code with viewers
+1. Launch app → auto-connects to server as guest
+2. Room ID and Password are auto-generated
+3. Click [Start Sharing]
+4. Room is created with password protection
+5. Access code appears in room info section
+6. Share Room ID + Password (or Access Code) with viewers
 ```
 
 ### As a Viewer
 
 ```
-1. Launch app → auto-connects to server
-2. Login → enter credentials
-3. Enter Room ID from host in the viewer section
-4. Click [Join session]
-5. If room is password-protected:
-   - Password dialog appears
-   - Enter access code from host
+1. Launch app → auto-connects to server as guest
+2. Enter Room ID from host
+3. Click [Join session]
+4. Password dialog appears automatically
+5. Enter password or access code from host
 6. UI transitions to fullscreen viewer screen:
    - Dark top bar with LIVE indicator and room code
    - Full-size video player area

@@ -180,6 +180,22 @@ public class MainController {
                 this::onAuthenticationSuccess);
         controller.setOnAccessCodeReceived(this::onAccessCodeReceived);
 
+        // ── Wire password-required callback for ROOM_003 errors ──
+        controller.setOnPasswordRequired(roomId -> {
+            Platform.runLater(() -> {
+                Stage owner = (Stage) connectionStatusLabel.getScene().getWindow();
+                RoomPasswordDialog.showJoinDialog(owner, roomId).ifPresent(result -> {
+                    // Try password first, fall back to access code
+                    String credential = (result.password() != null && !result.password().isEmpty())
+                            ? result.password()
+                            : result.accessCode();
+                    if (credential != null && !credential.isEmpty()) {
+                        controller.startViewing(roomId, credential);
+                    }
+                });
+            });
+        });
+
         // ── Generate default room ID and password ──
         generatedRoomId = generateRoomId();
         generatedPassword = generatePassword();
@@ -275,7 +291,7 @@ public class MainController {
 
     @FXML
     private void handleStartHosting() {
-        controller.startHosting(generatedRoomId);
+        controller.startHosting(generatedRoomId, generatedPassword);
     }
 
     @FXML
@@ -301,6 +317,10 @@ public class MainController {
 
     @FXML
     private void handleRefreshPassword() {
+        if (controller.isHosting()) {
+            connectionStatusLabel.setText("⚠️ Cannot change password while hosting");
+            return;
+        }
         generatedPassword = generatePassword();
         sessionPasswordLabel.setText(generatedPassword);
     }

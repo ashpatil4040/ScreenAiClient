@@ -18,6 +18,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -41,15 +42,16 @@ public class DualModeController {
     // Host functionality
     private ScreenCaptureService screenCaptureService;
     private ScheduledExecutorService hostMetricsExecutor;
-    private boolean isHosting = false;
+    private final AtomicBoolean isHosting = new AtomicBoolean(false);
     private String hostRoomId;
+    private String hostPassword;
     private int viewerCount = 0;
     private long framesSent = 0;
     private long hostStartTime = 0;
 
     // Viewer functionality
-    private H264DecoderService decoderService;
-    private boolean isViewing = false;
+    private volatile H264DecoderService decoderService;
+    private final AtomicBoolean isViewing = new AtomicBoolean(false);
     private String viewingRoomId;
     private long framesReceived = 0;
     private long bytesReceived = 0;
@@ -78,6 +80,9 @@ public class DualModeController {
     private Consumer<Image> onFrameReceived;
     private Consumer<String> onViewerPerformanceUpdate;
     private Consumer<Boolean> onViewingStateUpdate;
+
+    // Callbacks - Password prompt for viewer joining password-protected room
+    private Consumer<String> onPasswordRequired;
 
     // Callbacks - Authentication
     private Consumer<String> onAuthenticationRequired;
@@ -251,6 +256,13 @@ public class DualModeController {
     }
 
     /**
+     * Set callback for when viewer needs to provide a room password
+     */
+    public void setOnPasswordRequired(Consumer<String> callback) {
+        this.onPasswordRequired = callback;
+    }
+
+    /**
      * Get the current room access code (if any)
      */
     public String getAccessCode() {
@@ -382,10 +394,10 @@ public class DualModeController {
         System.out.println("🔄 [DUAL] Downgrading to guest session...");
 
         // Stop any active hosting/viewing
-        if (isHosting) {
+        if (isHosting.get()) {
             stopHosting();
         }
-        if (isViewing) {
+        if (isViewing.get()) {
             stopViewing();
         }
 
@@ -448,12 +460,12 @@ public class DualModeController {
         System.out.println("🔌 [DUAL] Disconnecting...");
 
         // Stop hosting if active
-        if (isHosting) {
+        if (isHosting.get()) {
             stopHosting();
         }
 
         // Stop viewing if active
-        if (isViewing) {
+        if (isViewing.get()) {
             stopViewing();
         }
 
@@ -484,8 +496,8 @@ public class DualModeController {
     private void onDisconnected() {
         System.out.println("🔌 [DUAL] Disconnected from server");
         isConnected = false;
-        isHosting = false;
-        isViewing = false;
+        isHosting.set(false);
+        isViewing.set(false);
 
         Platform.runLater(() -> {
             updateStatus("Disconnected from server");
@@ -506,26 +518,33 @@ public class DualModeController {
     /**
      * Start hosting (screen sharing)
      */
-    public void startHosting(String customRoomId) {
+    public void startHosting(String customRoomId, String password) {
         if (!isConnected) {
             updateStatus("⚠️ Not connected to server");
             return;
         }
 
-        if (isHosting) {
+        if (isHosting.get()) {
             updateStatus("⚠️ Already hosting");
             return;
         }
 
-        // Generate room ID
-        hostRoomId = (customRoomId != null && !customRoomId.isEmpty()) ? customRoomId
+        // Strip spaces from room ID (UI displays "1 234 567 890" but server expects
+        // "1234567890")
+        String cleanRoomId = (customRoomId != null && !customRoomId.isEmpty())
+                ? customRoomId.replaceAll("\\s+", "")
                 : "room-" + UUID.randomUUID().toString().substring(0, 8);
+        hostRoomId = cleanRoomId;
+        hostPassword = password;
 
-        // Create room on server
-        String createRoomMsg = String.format(
-                "{\"type\":\"create-room\",\"roomId\":\"%s\"}",
-                hostRoomId);
-        serverConnection.sendText(createRoomMsg);
+        // Create room on server with optional password
+        StringBuilder msg = new StringBuilder();
+        msg.append("{\"type\":\"create-room\",\"roomId\":\"").append(hostRoomId).append("\"");
+        if (password != null && !password.isEmpty()) {
+            msg.append(",\"password\":\"").append(password.replace("\"", "\\\"")).append("\"");
+        }
+        msg.append("}");
+        serverConnection.sendText(msg.toString());
         updateStatus("📍 Creating room: " + hostRoomId);
     }
 
@@ -535,11 +554,9 @@ public class DualModeController {
     public void stopHosting() {
         System.out.println("🛑 [DUAL] Stopping hosting...");
 
-        if (!isHosting) {
+        if (!isHosting.compareAndSet(true, false)) {
             return;
         }
-
-        isHosting = false;
 
         // Stop screen capture
         if (screenCaptureService != null) {
@@ -567,7 +584,7 @@ public class DualModeController {
             if (onViewerCountUpdate != null) {
                 onViewerCountUpdate.accept(0);
             }
-            updateStatus(isViewing ? "🎥 Viewing: " + viewingRoomId : "⏹ Hosting stopped");
+            updateStatus(isViewing.get() ? "🎥 Viewing: " + viewingRoomId : "⏹ Hosting stopped");
         });
 
         System.out.println("✅ [DUAL] Hosting stopped");
@@ -575,15 +592,18 @@ public class DualModeController {
 
     private void startScreenCapture() {
         try {
-            isHosting = true;
             framesSent = 0;
             hostStartTime = System.currentTimeMillis();
 
             screenCaptureService = new ScreenCaptureService(this::sendVideoFrame);
             screenCaptureService.start();
 
+            // Set hosting flag AFTER capture starts successfully
+            isHosting.set(true);
+
             Platform.runLater(() -> {
-                updateStatus("🎥 Hosting room: " + hostRoomId + (isViewing ? " | Viewing: " + viewingRoomId : ""));
+                updateStatus(
+                        "🎥 Hosting room: " + hostRoomId + (isViewing.get() ? " | Viewing: " + viewingRoomId : ""));
                 if (onHostingStateUpdate != null) {
                     onHostingStateUpdate.accept(true);
                 }
@@ -598,13 +618,13 @@ public class DualModeController {
 
         } catch (Exception e) {
             System.err.println("❌ [DUAL] Failed to start screen capture: " + e.getMessage());
-            isHosting = false;
+            isHosting.set(false);
             updateStatus("❌ Failed to start hosting: " + e.getMessage());
         }
     }
 
     private void sendVideoFrame(byte[] frameData) {
-        if (isHosting && serverConnection != null && serverConnection.isConnected()) {
+        if (isHosting.get() && serverConnection != null && serverConnection.isConnected()) {
             framesSent++;
             serverConnection.sendBinary(frameData);
         }
@@ -612,7 +632,7 @@ public class DualModeController {
 
     private void startHostMetrics() {
         hostMetricsExecutor.scheduleAtFixedRate(() -> {
-            if (isHosting && framesSent > 0) {
+            if (isHosting.get() && framesSent > 0) {
                 long elapsed = (System.currentTimeMillis() - hostStartTime) / 1000;
                 if (elapsed > 0) {
                     double fps = framesSent / (double) elapsed;
@@ -634,12 +654,19 @@ public class DualModeController {
      * Start viewing a room
      */
     public void startViewing(String roomId) {
+        startViewing(roomId, null);
+    }
+
+    /**
+     * Start viewing a room with optional password/access code
+     */
+    public void startViewing(String roomId, String password) {
         if (!isConnected) {
             updateStatus("⚠️ Not connected to server");
             return;
         }
 
-        if (isViewing) {
+        if (isViewing.get()) {
             updateStatus("⚠️ Already viewing. Stop first to switch rooms.");
             return;
         }
@@ -654,17 +681,25 @@ public class DualModeController {
         System.out.println("👁️ [DUAL] Attempting to join room: '" + cleanRoomId + "'");
 
         // Cannot view own room
-        if (cleanRoomId.equals(hostRoomId) && isHosting) {
+        if (cleanRoomId.equals(hostRoomId) && isHosting.get()) {
             updateStatus("⚠️ Cannot view your own room");
             return;
         }
 
         viewingRoomId = cleanRoomId;
 
-        // Join room as viewer
-        String joinRoomMsg = String.format(
-                "{\"type\":\"join-room\",\"roomId\":\"%s\"}",
-                cleanRoomId);
+        // Join room as viewer, include password/accessCode if provided
+        String joinRoomMsg;
+        if (password != null && !password.trim().isEmpty()) {
+            String trimmedPw = password.trim();
+            joinRoomMsg = String.format(
+                    "{\"type\":\"join-room\",\"roomId\":\"%s\",\"password\":\"%s\",\"accessCode\":\"%s\"}",
+                    cleanRoomId, trimmedPw, trimmedPw);
+        } else {
+            joinRoomMsg = String.format(
+                    "{\"type\":\"join-room\",\"roomId\":\"%s\"}",
+                    cleanRoomId);
+        }
         serverConnection.sendText(joinRoomMsg);
         updateStatus("🔍 Joining room: " + cleanRoomId);
     }
@@ -675,11 +710,11 @@ public class DualModeController {
     public void stopViewing() {
         System.out.println("🛑 [DUAL] Stopping viewing...");
 
-        if (!isViewing) {
+        if (!isViewing.get()) {
             return;
         }
 
-        isViewing = false;
+        isViewing.set(false);
 
         // Stop decoder
         if (decoderService != null) {
@@ -699,7 +734,7 @@ public class DualModeController {
             if (onViewingStateUpdate != null) {
                 onViewingStateUpdate.accept(false);
             }
-            updateStatus(isHosting ? "🎥 Hosting: " + hostRoomId : "⏹ Viewing stopped");
+            updateStatus(isHosting.get() ? "🎥 Hosting: " + hostRoomId : "⏹ Viewing stopped");
         });
 
         System.out.println("✅ [DUAL] Viewing stopped");
@@ -757,6 +792,12 @@ public class DualModeController {
                 case "viewer-count":
                     handleViewerCount(json);
                     break;
+                case "viewer-request":
+                    handleViewerRequest(json);
+                    break;
+                case "viewer-approved":
+                    System.out.println("✅ [DUAL] Viewer approved");
+                    break;
 
                 // Viewer messages
                 case "room-joined":
@@ -767,6 +808,9 @@ public class DualModeController {
                     break;
                 case "presenter-left":
                     handlePresenterLeft(json);
+                    break;
+                case "waiting-approval":
+                    handleWaitingApproval(json);
                     break;
 
                 // Common
@@ -786,7 +830,7 @@ public class DualModeController {
     }
 
     private void handleBinaryMessage(byte[] data) {
-        if (!isViewing || data == null || data.length == 0) {
+        if (!isViewing.get() || data == null || data.length == 0) {
             return;
         }
 
@@ -870,10 +914,24 @@ public class DualModeController {
         });
     }
 
+    private void handleViewerRequest(JsonNode json) {
+        String viewerSessionId = json.has("viewerSessionId") ? json.get("viewerSessionId").asText() : null;
+        String viewerUsername = json.has("viewerUsername") ? json.get("viewerUsername").asText() : "unknown";
+        System.out.println("👁️ [DUAL] Viewer request from " + viewerUsername + " - auto-approving");
+
+        // Auto-approve: password validation on the server is sufficient
+        if (viewerSessionId != null && serverConnection != null && serverConnection.isConnected()) {
+            String approveMsg = String.format(
+                    "{\"type\":\"approve-viewer\",\"viewerSessionId\":\"%s\"}",
+                    viewerSessionId);
+            serverConnection.sendText(approveMsg);
+        }
+    }
+
     // Viewer message handlers
     private void handleRoomJoined(JsonNode json) {
         System.out.println("✅ [DUAL] Joined room as viewer: " + viewingRoomId);
-        isViewing = true;
+        isViewing.set(true);
         framesReceived = 0;
         bytesReceived = 0;
         viewerStartTime = System.currentTimeMillis();
@@ -885,7 +943,8 @@ public class DualModeController {
             if (onViewingStateUpdate != null) {
                 onViewingStateUpdate.accept(true);
             }
-            updateStatus((isHosting ? "🎥 Hosting: " + hostRoomId + " | " : "") + "👁️ Viewing: " + viewingRoomId);
+            updateStatus(
+                    (isHosting.get() ? "🎥 Hosting: " + hostRoomId + " | " : "") + "👁️ Viewing: " + viewingRoomId);
         });
     }
 
@@ -897,13 +956,27 @@ public class DualModeController {
     private void handlePresenterLeft(JsonNode json) {
         System.out.println("📺 [DUAL] Presenter left the room");
         Platform.runLater(() -> {
-            updateStatus("⚠️ Presenter disconnected" + (isHosting ? " | Still hosting: " + hostRoomId : ""));
+            updateStatus("⚠️ Presenter disconnected" + (isHosting.get() ? " | Still hosting: " + hostRoomId : ""));
         });
+    }
+
+    private void handleWaitingApproval(JsonNode json) {
+        String roomId = json.has("roomId") ? json.get("roomId").asText() : viewingRoomId;
+        System.out.println("⏳ [DUAL] Waiting for host approval in room: " + roomId);
+        updateStatus("⏳ Waiting for host approval...");
     }
 
     private void handleError(JsonNode json) {
         String error = json.has("message") ? json.get("message").asText() : "Unknown error";
-        System.err.println("❌ [DUAL] Server error: " + error);
+        String code = json.has("code") ? json.get("code").asText() : "";
+        System.err.println("❌ [DUAL] Server error: " + error + " (code: " + code + ")");
+
+        // ROOM_003 = password required for this room
+        if ("ROOM_003".equals(code) && onPasswordRequired != null) {
+            Platform.runLater(() -> onPasswordRequired.accept(viewingRoomId));
+            return;
+        }
+
         Platform.runLater(() -> {
             updateStatus("❌ Error: " + error);
         });
@@ -924,11 +997,11 @@ public class DualModeController {
     }
 
     public boolean isHosting() {
-        return isHosting;
+        return isHosting.get();
     }
 
     public boolean isViewing() {
-        return isViewing;
+        return isViewing.get();
     }
 
     public String getHostRoomId() {
